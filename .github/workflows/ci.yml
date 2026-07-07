@@ -27,7 +27,11 @@ jobs:
 
       - name: Set up Alire + GNAT toolchain
         uses: alire-project/setup-alire@v6
-        # Defaults: alr 2.1.1, toolchain "gnat_native gprbuild".
+        # Pin the GNAT major: libgpr 25 (in the aws closure) does not
+        # compile under GNAT 16 ("time_t" is undefined); drop the pin once
+        # the closure supports 16.
+        with:
+          toolchain: gnat_native^15 gprbuild
 
       - name: Toolchain fingerprint for cache keys
         # Fold the toolchain version into every cache key below, so a
@@ -79,6 +83,11 @@ jobs:
 
       - name: Set up Alire + GNAT toolchain
         uses: alire-project/setup-alire@v6
+        # Pin the GNAT major: libgpr 25 (in the aws closure) does not
+        # compile under GNAT 16 ("time_t" is undefined); drop the pin once
+        # the closure supports 16.
+        with:
+          toolchain: gnat_native^15 gprbuild
 
       - name: Toolchain fingerprint for cache keys
         run: |
@@ -121,6 +130,11 @@ jobs:
 
       - name: Set up Alire + GNAT toolchain
         uses: alire-project/setup-alire@v6
+        # Pin the GNAT major: libgpr 25 (in the aws closure) does not
+        # compile under GNAT 16 ("time_t" is undefined); drop the pin once
+        # the closure supports 16.
+        with:
+          toolchain: gnat_native^15 gprbuild
 
       - name: Install gnatformat
         run: |
