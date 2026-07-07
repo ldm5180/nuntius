@@ -1,0 +1,19 @@
+--  SPARK proof target.  Not built by `alr build`; analysed with
+--  `alr exec -- gnatprove -P proof/proof.gpr`.
+--
+--  Sources the SPARK core directly (rather than withing nuntius.gpr)
+--  because the Alire-generated config gpr withs every dependency's project,
+--  which would drag the adapters' foreign code (AWS, utilada) into the
+--  proof tree.  This tree is exactly the proof harnesses + src/core,
+--  mirroring sml-ada's proof setup.  gnatprove analyses generics only
+--  through concrete instances, so the harness sources here provide them.
+project Proof is
+
+   for Source_Dirs use ("src", "../src/core");
+   for Object_Dir use "obj";
+
+   package Compiler is
+      for Default_Switches ("Ada") use ("-gnat2022", "-gnata");
+   end Compiler;
+
+end Proof;
