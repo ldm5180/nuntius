@@ -1,0 +1,43 @@
+name = "nuntius"
+description = "Narrow HTTP/websocket client transports, SPARK-proven buffering"
+version = "0.1.0"
+
+authors = ["Lenny Maiorani"]
+maintainers = ["Lenny Maiorani <639247+ldm5180@users.noreply.github.com>"]
+maintainers-logins = ["ldm5180"]
+licenses = "MIT"
+website = "https://github.com/ldm5180/nuntius"
+tags = ["http", "websocket", "transport", "spark"]
+
+project-files = ["nuntius.gpr"]
+
+[[depends-on]]
+utilada_curl = "^2.9.0"
+aws = "^25.2.0"
+aunit = "^26.0.0"
+
+[build-switches]
+"*".ada_version = "Ada2022"
+
+#  `alr test` runs actions with an empty GPR_PROJECT_PATH, so each wraps its
+#  command in `alr exec --` to pick up the toolchain, the adapters' crates and
+#  AUnit.  Argv-only actions (no `sh -c`, no `&&`) so this runs on Windows
+#  too; the runner exits non-zero on any failing assertion, so a failure
+#  fails the job.  The suite is built and run in both optimization modes
+#  (release -O3, debug -O0), selected by the MODE external (sml-ada
+#  convention), so the library is exercised at each -O level.
+[[actions]]
+type = "test"
+command = ["alr", "exec", "--", "gprbuild", "-p", "-j0", "-XMODE=release", "-P", "tests/test_nuntius.gpr"]
+
+[[actions]]
+type = "test"
+command = ["alr", "exec", "--", "tests/bin/release/test_runner"]
+
+[[actions]]
+type = "test"
+command = ["alr", "exec", "--", "gprbuild", "-p", "-j0", "-XMODE=debug", "-P", "tests/test_nuntius.gpr"]
+
+[[actions]]
+type = "test"
+command = ["alr", "exec", "--", "tests/bin/debug/test_runner"]

@@ -1,0 +1,13 @@
+/obj/
+/lib/
+/alire/
+/config/
+/tests/obj/
+/tests/bin/
+/proof/obj/
+
+# Local-only TDD audit log: kept for traceability, never committed.
+/docs/tdd-log.md
+
+# Local Claude Code settings, not shared.
+/.claude/

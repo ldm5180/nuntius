@@ -1,0 +1,35 @@
+with "config/nuntius_config.gpr";
+with "utilada_curl";
+with "aws";
+
+--  Nuntius: narrow client-side transport ports (HTTP verbs, websocket
+--  frames) with production adapters over libcurl and the AWS crate.  The
+--  ports and adapters live in src/app; src/core holds the SPARK-proven
+--  buffering (the websocket adapter's bounded frame FIFO) and may depend on
+--  nothing but other core units.  proof/proof.gpr sources src/core directly
+--  and withs nothing, keeping foreign code out of the proof tree.
+project Nuntius is
+
+   for Library_Name use "Nuntius";
+   for Library_Version use
+     Project'Library_Name & ".so." & Nuntius_Config.Crate_Version;
+
+   for Source_Dirs use ("src/core", "src/app", "config");
+   for Object_Dir use "obj/" & Nuntius_Config.Build_Profile;
+   for Create_Missing_Dirs use "True";
+   for Library_Dir use "lib";
+
+   type Library_Type_Type is ("relocatable", "static", "static-pic");
+   Library_Type : Library_Type_Type :=
+     external ("NUNTIUS_LIBRARY_TYPE", external ("LIBRARY_TYPE", "static"));
+   for Library_Kind use Library_Type;
+
+   package Compiler is
+      for Default_Switches ("Ada") use Nuntius_Config.Ada_Compiler_Switches;
+   end Compiler;
+
+   package Binder is
+      for Switches ("Ada") use ("-Es"); --  Symbolic traceback
+   end Binder;
+
+end Nuntius;
