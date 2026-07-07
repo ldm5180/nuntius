@@ -57,7 +57,13 @@ make build    # build the library
 make test     # AUnit suite, both -O modes (loopback refusals only, no network)
 make prove    # SPARK proof, --checks-as-errors=on
 make format   # gnatformat --check
+make example  # build the demo mains both ways (CI builds them, running is manual)
+make run      # build and run the http_get example (needs a network)
 make help     # all targets
 ```
+
+The demo mains live in [example/src](example/src): `http_get [URL]` fetches a
+page over the curl adapter; `ws_listen WS_URL [PAYLOAD]` dials a websocket,
+optionally sends one subscribe frame, and prints the first inbound frames.
 
 Conventions (SPARK, strict TDD, commit style) live in [CLAUDE.md](CLAUDE.md).

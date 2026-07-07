@@ -19,6 +19,9 @@ websocket port always means "reconnect-worthy".
   no network beyond loopback connection-refusals
 - `make prove`   — SPARK proof, `--checks-as-errors=on`; must exit 0
 - `make format`  — `gnatformat --check` over all committed Ada sources
+- `make example` — build the demo mains both ways (CI builds, never runs them:
+  they talk to real endpoints)
+- `make run`     — build and run the release `http_get` example (needs network)
 - `alr --non-interactive build --validation` — warnings-as-errors gate (CI)
 
 ## Layout
@@ -30,6 +33,9 @@ websocket port always means "reconnect-worthy".
   (including `Register`, so consumers never `with Util.*`); all AWS
   specifics stay behind `.Aws_Client`.
 - `tests/` — AUnit suite (`test_nuntius.gpr`, driver `test_runner.adb`).
+- `example/` — standalone demo mains (`http_get`, `ws_listen`) showing the
+  consumer story end to end; built in CI, run manually against real
+  endpoints.
 - `proof/` — gnatprove harness (`proof.gpr`; sources `../src/core` directly
   and withs nothing, keeping foreign code out of the proof tree).
 - `docs/tdd-log.md` — git-ignored TDD audit log.

@@ -75,6 +75,13 @@ jobs:
         # network beyond loopback connection-refusals.
         run: alr --non-interactive test
 
+      - name: Build the examples (both modes)
+        # Built, not run: the examples talk to real endpoints (an HTTP GET,
+        # a websocket dial), so running them in CI would hang the job on
+        # the runner's network weather.  Building keeps them compiling
+        # against the ports forever.
+        run: make example
+
   proof:
     name: SPARK proof
     runs-on: ubuntu-latest

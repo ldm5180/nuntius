@@ -5,6 +5,8 @@
 /tests/obj/
 /tests/bin/
 /proof/obj/
+/example/obj/
+/example/bin/
 
 # Local-only TDD audit log: kept for traceability, never committed.
 /docs/tdd-log.md
