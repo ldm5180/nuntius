@@ -16,10 +16,12 @@ utilada_curl = "^2.9.0"
 sml = "*"
 aunit = "^26.0.0"
 
-#  sml-ada is not in the community index; pin it like the application repos
-#  do.  A consumer that pins sml itself (arb-ada does) overrides this.
+#  sml-ada is not in the community index; pin it to an exact commit so a
+#  build is reproducible from this file alone.  A consumer workspace must
+#  pin the SAME commit -- alr 2.x refuses conflicting pin links -- so
+#  bumping this is coordinated with the application repos (arb-ada).
 [[pins]]
-sml = { url = "https://github.com/ldm5180/sml-ada.git", branch = "main" }
+sml = { url = "https://github.com/ldm5180/sml-ada.git", commit = "1a8d03743af9ab09cc648bfecb4408da81beea97" }
 
 [build-switches]
 "*".ada_version = "Ada2022"
