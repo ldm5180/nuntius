@@ -1,5 +1,6 @@
 with Nuntius;
 with Nuntius.Frame_Fifo;
+with Nuntius.Rfc6455;
 
 --  Withs every core unit so the whole SPARK closure is in gnatprove's
 --  tree even when a unit temporarily has no other proof-side client.
