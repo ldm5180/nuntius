@@ -1,10 +1,11 @@
 # nuntius
 
 Narrow HTTP and websocket client transports for Ada 2022 — tiny ports
-(`Nuntius.Http`, `Nuntius.Ws`), production adapters (libcurl via utilada,
-the AWS crate's client-side websocket), and a SPARK-proven bounded frame
-FIFO (`Nuntius.Frame_Fifo`) doing the websocket adapter's buffering,
-packaged as a reusable, independently proven crate.
+(`Nuntius.Http`, `Nuntius.Ws`), production adapters (libcurl via utilada
+for HTTP, a hand-rolled RFC 6455 client over `GNAT.Sockets` for the
+websocket), a SPARK-proven bounded frame FIFO (`Nuntius.Frame_Fifo`) and a
+SPARK-proven wire codec (`Nuntius.Rfc6455`) doing the websocket adapter's
+buffering and framing, packaged as a reusable, independently proven crate.
 
 The ports are the product: exactly the shapes a REST-and-streaming
 application needs, and nothing else, so consumers test against scripted
@@ -26,12 +27,13 @@ websocket port always means "reconnect-worthy".
 
 ## Layout
 
-- `src/core/` — the SPARK core (`Nuntius.Frame_Fifo`): every unit carries
-  `SPARK_Mode`, does zero IO, and may `with` only other core units.
+- `src/core/` — the SPARK core (`Nuntius.Frame_Fifo`, `Nuntius.Rfc6455`):
+  every unit carries `SPARK_Mode`, does zero IO, and may `with` only other
+  core units (and `Sml.*` where a unit is machine-backed).
 - `src/app/`  — the ports and adapters: `Nuntius.Http` + `.Curl`,
-  `Nuntius.Ws` + `.Aws_Client`. All libcurl specifics stay behind `.Curl`
-  (including `Register`, so consumers never `with Util.*`); all AWS
-  specifics stay behind `.Aws_Client`.
+  `Nuntius.Ws` + `.Native_Client`. All libcurl specifics stay behind `.Curl`
+  (including `Register`, so consumers never `with Util.*`); all socket and
+  RFC 6455 framing specifics stay behind `.Native_Client`.
 - `tests/` — AUnit suite (`test_nuntius.gpr`, driver `test_runner.adb`).
 - `example/` — standalone demo mains (`http_get`, `ws_listen`) showing the
   consumer story end to end; built in CI, run manually against real

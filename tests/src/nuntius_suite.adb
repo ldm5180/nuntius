@@ -3,7 +3,6 @@ with AUnit.Test_Cases;
 with Nuntius_Frame_Fifo_Tests;
 with Nuntius_Http_Curl_Tests;
 with Nuntius_Rfc6455_Tests;
-with Nuntius_Ws_Aws_Client_Tests;
 with Nuntius_Ws_Native_Client_Tests;
 
 package body Nuntius_Suite is
@@ -19,7 +18,6 @@ package body Nuntius_Suite is
    begin
       Add (new Nuntius_Frame_Fifo_Tests.Test);
       Add (new Nuntius_Rfc6455_Tests.Test);
-      Add (new Nuntius_Ws_Aws_Client_Tests.Test);
       Add (new Nuntius_Ws_Native_Client_Tests.Test);
       Add (new Nuntius_Http_Curl_Tests.Test);
       return Result;

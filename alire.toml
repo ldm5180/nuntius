@@ -13,7 +13,6 @@ project-files = ["nuntius.gpr"]
 
 [[depends-on]]
 utilada_curl = "^2.9.0"
-aws = "^25.2.0"
 sml = "*"
 aunit = "^26.0.0"
 
@@ -24,16 +23,6 @@ sml = { url = "https://github.com/ldm5180/sml-ada.git", branch = "main" }
 
 [build-switches]
 "*".ada_version = "Ada2022"
-
-[gpr-set-externals]
-#  The aws crate's shared.gpr defaults PRJ_BUILD to "Debug", whose switch
-#  set includes -gnatwe -- so any NEW compiler warning (e.g. GNAT 16.1's
-#  "use clause for package Ada has no effect" in aws-smtp) breaks a
-#  from-scratch build of an unmodified aws.  Its manifest never sets the
-#  external, so the consumer must: Release drops -gnatwe (warnings stay
-#  visible, not fatal) and builds the transport stack -O2 instead of -O0
-#  with assertions.
-PRJ_BUILD = "Release"
 
 #  `alr test` runs actions with an empty GPR_PROJECT_PATH, so each wraps its
 #  command in `alr exec --` to pick up the toolchain, the adapters' crates and
