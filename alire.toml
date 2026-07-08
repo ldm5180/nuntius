@@ -14,7 +14,13 @@ project-files = ["nuntius.gpr"]
 [[depends-on]]
 utilada_curl = "^2.9.0"
 aws = "^25.2.0"
+sml = "*"
 aunit = "^26.0.0"
+
+#  sml-ada is not in the community index; pin it like the application repos
+#  do.  A consumer that pins sml itself (arb-ada does) overrides this.
+[[pins]]
+sml = { url = "https://github.com/ldm5180/sml-ada.git", branch = "main" }
 
 [build-switches]
 "*".ada_version = "Ada2022"

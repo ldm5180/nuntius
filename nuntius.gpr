@@ -1,6 +1,7 @@
 with "config/nuntius_config.gpr";
 with "utilada_curl";
 with "aws";
+with "sml";
 
 --  Nuntius: narrow client-side transport ports (HTTP verbs, websocket
 --  frames) with production adapters over libcurl and the AWS crate.  The
