@@ -277,6 +277,8 @@ package body Nuntius.Ws.Native_Client is
       Buf  : Ada.Streams.Stream_Element_Array (1 .. Recv_Chunk);
       Last : Ada.Streams.Stream_Element_Offset;
       Room : constant Natural := Self.Accum'Length - Self.Accum_Len;
+      Cap  : constant Ada.Streams.Stream_Element_Offset :=
+        Ada.Streams.Stream_Element_Offset (Natural'Min (Recv_Chunk, Room));
    begin
       Got := False;
       Fatal := False;
@@ -286,7 +288,12 @@ package body Nuntius.Ws.Native_Client is
       end if;
 
       begin
-         GNAT.Sockets.Receive_Socket (Self.Sock, Buf, Last);
+         --  Read at most Room bytes.  Receive_Socket fills as much of Item
+         --  as it can, so passing the whole Buf would pull in more than the
+         --  accumulator can hold and the surplus (Last - Room) would be
+         --  dropped on the floor -- desyncing the frame stream.  Capping the
+         --  slice leaves the surplus in the kernel buffer for the next read.
+         GNAT.Sockets.Receive_Socket (Self.Sock, Buf (1 .. Cap), Last);
       exception
          when E : GNAT.Sockets.Socket_Error =>
             if GNAT.Sockets.Resolve_Exception (E)

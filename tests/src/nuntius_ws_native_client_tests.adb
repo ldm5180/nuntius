@@ -26,6 +26,20 @@ package body Nuntius_Ws_Native_Client_Tests is
         Idle_Limit      => 2.0,
         Poll_Slice      => 0.25);
 
+   --  Tiny frames but a deep ring: a burst of many frames arrives in one
+   --  read that far exceeds the accumulator, so the read pump must not drop
+   --  the surplus (the desync bug this guards against).  The whole burst is
+   --  one contiguous write (~300 bytes) landing in one recv, far past the
+   --  16 + header accumulator.
+   Burst_Count : constant := 100;
+
+   package Burst_Ws is new
+     Nuntius.Ws.Native_Client
+       (Ring_Depth      => 128,
+        Max_Frame_Bytes => 16,
+        Idle_Limit      => 2.0,
+        Poll_Slice      => 0.25);
+
    ------------------------------------------------------------------
    --  Offline cases
    ------------------------------------------------------------------
@@ -232,6 +246,114 @@ package body Nuntius_Ws_Native_Client_Tests is
       Assert (Result.Pong_Seen, "client auto-ponged the server's ping");
    end Test_Loopback;
 
+   --  Serve the upgrade, then fire Burst_Count tiny text frames back to
+   --  back (payload = the frame's index) with no delay, so they land in the
+   --  client in one oversized read.
+   task type Burst_Server is
+      entry Serve (Listener : Socket_Type);
+   end Burst_Server;
+
+   task body Burst_Server is
+      Listen : Socket_Type;
+      Peer   : Socket_Type;
+      From   : Sock_Addr_Type;
+   begin
+      accept Serve (Listener : Socket_Type) do
+         Listen := Listener;
+      end Serve;
+      Accept_Socket (Listen, Peer, From);
+
+      declare
+         Buf  : Stream_Element_Array (1 .. 1_024);
+         Last : Stream_Element_Offset;
+         Seen : Natural := 0;
+      begin
+         loop
+            Receive_Socket (Peer, Buf, Last);
+            exit when Last < Buf'First;
+            Seen := Seen + Natural (Last);
+            exit when Seen >= 4;
+         end loop;
+      end;
+
+      Send_Bytes
+        (Peer,
+         [Character'Pos ('H'),
+          Character'Pos ('T'),
+          Character'Pos ('T'),
+          Character'Pos ('P'),
+          Character'Pos ('/'),
+          Character'Pos ('1'),
+          Character'Pos ('.'),
+          Character'Pos ('1'),
+          Character'Pos (' '),
+          Character'Pos ('1'),
+          Character'Pos ('0'),
+          Character'Pos ('1'),
+          13,
+          10,
+          13,
+          10]);
+
+      --  All frames in ONE write so they land in a single oversized recv:
+      --  unmasked single-byte text frames [FIN|text, len 1, index].
+      declare
+         Blob :
+           Stream_Element_Array (1 .. Stream_Element_Offset (Burst_Count * 3));
+      begin
+         for I in 0 .. Burst_Count - 1 loop
+            Blob (Stream_Element_Offset (I * 3 + 1)) := 16#81#;
+            Blob (Stream_Element_Offset (I * 3 + 2)) := 16#01#;
+            Blob (Stream_Element_Offset (I * 3 + 3)) := Stream_Element (I);
+         end loop;
+         Send_Bytes (Peer, Blob);
+      end;
+
+      Send_Bytes (Peer, [16#88#, 16#00#]);  --  close
+      Close_Socket (Peer);
+      Close_Socket (Listen);
+   exception
+      when others =>
+         Close_Socket (Peer);
+   end Burst_Server;
+
+   procedure Test_Burst (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      pragma Unreferenced (T);
+      Listen : Socket_Type;
+      Srv    : Burst_Server;
+      C      : Burst_Ws.Client;
+      Buf    : String (1 .. 32);
+      Last   : Natural;
+      Ok     : Boolean;
+      Port   : Port_Type;
+   begin
+      Create_Socket (Listen);
+      Set_Socket_Option (Listen, Socket_Level, (Reuse_Address, True));
+      Bind_Socket (Listen, (Family_Inet, Loopback_Inet_Addr, 0));
+      Listen_Socket (Listen);
+      Port := Get_Socket_Name (Listen).Port;
+
+      Srv.Serve (Listen);
+
+      Burst_Ws.Connect
+        (C,
+         "ws://127.0.0.1:" & Trim (Port_Type'Image (Port), Both) & "/b",
+         Ok);
+      Assert (Ok, "burst: handshake completes");
+
+      --  Every one of the Burst_Count frames must arrive, in order, none
+      --  dropped by an over-long read.
+      for I in 0 .. Burst_Count - 1 loop
+         Burst_Ws.Receive (C, Buf, Last, Ok);
+         Assert (Ok, "burst: frame" & I'Image & " delivered");
+         Assert
+           (Last = 1 and then Character'Pos (Buf (1)) = I,
+            "burst: frame" & I'Image & " has the right payload, in order");
+      end loop;
+
+      Burst_Ws.Close (C);
+   end Test_Burst;
+
    overriding
    procedure Register_Tests (T : in out Test) is
    begin
@@ -243,6 +365,10 @@ package body Nuntius_Ws_Native_Client_Tests is
         (T,
          Test_Loopback'Access,
          "loopback: handshake, message, fragmentation, auto-pong");
+      Register_Routine
+        (T,
+         Test_Burst'Access,
+         "burst of many frames in one read: none dropped, in order");
    end Register_Tests;
 
    overriding
