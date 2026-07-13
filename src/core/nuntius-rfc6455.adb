@@ -7,35 +7,27 @@ is
    Base64_Alphabet : constant String :=
      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-   --  The 4-bit opcode nibble -> our enum; reserved values return False.
-   procedure Classify_Opcode
-     (Nibble : Octet; Op : out Opcode; Known : out Boolean) is
-   begin
-      Known := True;
-      case Nibble is
-         when 16#0#  =>
-            Op := Op_Continuation;
+   --  The 4-bit opcode nibble -> our enum; reserved values are unknown.
+   function Is_Known_Opcode (Nibble : Octet) return Boolean
+   is (Nibble in 16#0# | 16#1# | 16#2# | 16#8# | 16#9# | 16#A#)
+   with Static;
 
-         when 16#1#  =>
-            Op := Op_Text;
+   function To_Opcode (Nibble : Octet) return Opcode
+   is (case Nibble is
+         when 16#1#  => Op_Text,
+         when 16#2#  => Op_Binary,
+         when 16#8#  => Op_Close,
+         when 16#9#  => Op_Ping,
+         when 16#A#  => Op_Pong,
+         when others => Op_Continuation)
+   with Static;
 
-         when 16#2#  =>
-            Op := Op_Binary;
-
-         when 16#8#  =>
-            Op := Op_Close;
-
-         when 16#9#  =>
-            Op := Op_Ping;
-
-         when 16#A#  =>
-            Op := Op_Pong;
-
-         when others =>
-            Op := Op_Continuation;
-            Known := False;
-      end case;
-   end Classify_Opcode;
+   --  The 0/2/8-byte extended length field a 7-bit length prefix implies
+   --  (RFC 6455 section 5.2): under 126 there is none, 126 means a 16-bit
+   --  field follows, and 127 (any larger value here) means a 64-bit one.
+   function Length_Field_Extra_Bytes (Len7 : Octet) return Natural
+   is (if Len7 < 126 then 0 elsif Len7 = 126 then 2 else 8)
+   with Static;
 
    ----------
    -- Decode --
@@ -56,10 +48,9 @@ is
          Masked  : constant Boolean := (B1 and 16#80#) /= 0;
          Len7    : constant Octet := B1 and 16#7F#;
          Mask_N  : constant Natural := (if Masked then 4 else 0);
-         Op      : Opcode;
-         Known   : Boolean;
-         Ext_N   : Natural;
-         Payload : Natural := 0;
+         Nibble  : constant Octet := B0 and 16#0F#;
+         Ext_N   : constant Natural := Length_Field_Extra_Bytes (Len7);
+         Payload : Natural := (if Len7 < 126 then Natural (Len7) else 0);
       begin
          --  RSV1..3 must be zero (we negotiate no extensions).
          if (B0 and 16#70#) /= 0 then
@@ -67,19 +58,9 @@ is
             return Result;
          end if;
 
-         Classify_Opcode (B0 and 16#0F#, Op, Known);
-         if not Known then
+         if not Is_Known_Opcode (Nibble) then
             Result.Status := Invalid;
             return Result;
-         end if;
-
-         if Len7 < 126 then
-            Ext_N := 0;
-            Payload := Natural (Len7);
-         elsif Len7 = 126 then
-            Ext_N := 2;
-         else
-            Ext_N := 8;
          end if;
 
          --  The whole header (control byte, length field, mask) must be in.
@@ -117,7 +98,7 @@ is
 
          Result :=
            (Status        => Ready,
-            Op            => Op,
+            Op            => To_Opcode (Nibble),
             Fin           => (B0 and 16#80#) /= 0,
             Masked        => Masked,
             Header_Bytes  => 2 + Ext_N + Mask_N,
@@ -214,7 +195,7 @@ is
 
    function Base64 (Data : Octets) return String is
       N       : constant Natural := Data'Length;
-      Out_Len : constant Natural := 4 * ((N + 2) / 3);
+      Out_Len : constant Natural := Base64_Length (N);
       R       : String (1 .. Out_Len) := [others => '='];
       Oi      : Natural := 1;
       I       : Natural := 0;

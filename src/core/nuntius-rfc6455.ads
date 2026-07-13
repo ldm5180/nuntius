@@ -93,11 +93,24 @@ is
        and then Into'Length >= Payload'Length + 6,
      Post => Last <= Into'Length;
 
+   Max_Base64_Input : constant := 1_024;
+
+   subtype Base64_Input_Length is Natural range 0 .. Max_Base64_Input;
+
+   --  The base64 output length for N input bytes (RFC 4648, no line
+   --  breaks): every 3 input bytes become 4 output characters, the last
+   --  group padded with '='.  The bounded subtype (rather than a Pre)
+   --  keeps this provably overflow-free while staying `with Static`
+   --  eligible -- a static function may carry no precondition.
+   function Base64_Length (N : Base64_Input_Length) return Natural
+   is (4 * ((N + 2) / 3))
+   with Static;
+
    --  Standard base64 (RFC 4648) -- for the 16-byte Sec-WebSocket-Key.
    function Base64 (Data : Octets) return String
    with
-     Pre  => Data'Length <= 1_024,
-     Post => Base64'Result'Length = 4 * ((Data'Length + 2) / 3);
+     Pre  => Data'Length <= Max_Base64_Input,
+     Post => Base64'Result'Length = Base64_Length (Data'Length);
 
    --  The opening client handshake request line + headers (CRLF-framed,
    --  terminated by a blank line).  No compression is offered.
