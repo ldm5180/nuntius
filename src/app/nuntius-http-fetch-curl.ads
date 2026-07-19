@@ -35,6 +35,14 @@ package Nuntius.Http.Fetch.Curl is
    overriding
    function In_Flight (Self : Curl_Client) return Natural;
 
+   --  One curl_multi_poll call: the multi's transfer sockets plus
+   --  Extra, up to Timeout_Ms.  With nothing to watch it sleeps the
+   --  full timeout (curl_multi_poll's improvement over the
+   --  instantly-returning curl_multi_wait).
+   overriding
+   procedure Wait
+     (Self : in out Curl_Client; Timeout_Ms : Natural; Extra : Fd_List);
+
 private
 
    --  One in-flight transfer: the easy handle, its header list, and the

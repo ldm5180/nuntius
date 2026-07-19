@@ -106,6 +106,28 @@ package body Nuntius.Http.Fetch.Curl is
      (M : System.Address; Running : access int) return Curl_Code
    with Import, Convention => C, External_Name => "curl_multi_perform";
 
+   --  struct curl_waitfd, for the extra fds curl_multi_poll folds into
+   --  its poll(2) set beside the transfer sockets.
+   Wait_Pollin : constant short := 1;  --  CURL_WAIT_POLLIN
+
+   type Wait_Fd is record
+      Fd      : int;
+      Events  : short;
+      Revents : short;
+   end record
+   with Convention => C;
+
+   type Wait_Fd_Table is array (Natural range <>) of aliased Wait_Fd
+   with Convention => C;
+
+   function Multi_Poll
+     (M          : System.Address;
+      Extra      : System.Address;
+      Extra_Nfds : unsigned;
+      Timeout_Ms : int;
+      Num_Fds    : access int) return Curl_Code
+   with Import, Convention => C, External_Name => "curl_multi_poll";
+
    --  struct CURLMsg: the enum, the easy handle, then a union whose only
    --  member we read is the CURLcode (valid exactly when Msg is DONE).
    --  Convention C lays the record out as the C compiler does.
@@ -438,6 +460,29 @@ package body Nuntius.Http.Fetch.Curl is
    overriding
    function In_Flight (Self : Curl_Client) return Natural
    is (Self.Live);
+
+   overriding
+   procedure Wait
+     (Self : in out Curl_Client; Timeout_Ms : Natural; Extra : Fd_List)
+   is
+      Num : aliased int := 0;
+      Fds : aliased Wait_Fd_Table (1 .. Extra'Length);
+   begin
+      Ensure_Multi (Self);
+      for K in Fds'Range loop
+         Fds (K) :=
+           (Fd      => int (Extra (Extra'First + K - 1)),
+            Events  => Wait_Pollin,
+            Revents => 0);
+      end loop;
+      Best_Effort
+        (Multi_Poll
+           (Self.Multi,
+            (if Fds'Length = 0 then System.Null_Address else Fds (1)'Address),
+            unsigned (Fds'Length),
+            int (Timeout_Ms),
+            Num'Access));
+   end Wait;
 
    overriding
    procedure Finalize (Self : in out Curl_Client) is

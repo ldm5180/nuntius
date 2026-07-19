@@ -1,19 +1,45 @@
+with Ada.Real_Time;
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
 
 with AUnit.Assertions; use AUnit.Assertions;
+
+with Interfaces.C;
+with System;
 
 with Nuntius.Http.Fetch.Curl;
 
 --  Offline behavior of the ASYNC (curl-multi) adapter: Start never
 --  waits, Pump never blocks, and a transport-level failure (a loopback
 --  connection-refusal) surfaces as a completion with Ok = False and
---  Status 0 -- the sync adapter's verdict convention.  Live exchanges
---  are the consumer's integration concern.
+--  Status 0 -- the sync adapter's verdict convention.  Wait is the
+--  event loop's one blocking call: it sleeps to its timeout when idle
+--  and wakes early on a readable extra fd or transfer-socket activity.
+--  Live exchanges are the consumer's integration concern.
 
 package body Nuntius_Http_Fetch_Curl_Tests is
 
    use AUnit.Test_Cases.Registration;
    use Nuntius.Http.Fetch;
+
+   --  A self-pipe stands in for the consumer's inotify/eventfd wake
+   --  sources (this GNAT's OS_Lib has no Create_Pipe, so bind pipe(2)
+   --  directly).
+   type Fd_Pair is array (0 .. 1) of Interfaces.C.int with Convention => C;
+
+   function C_Pipe (Fds : access Fd_Pair) return Interfaces.C.int
+   with Import, Convention => C, External_Name => "pipe";
+
+   function C_Write
+     (Fd : Interfaces.C.int; Buf : System.Address; N : Interfaces.C.size_t)
+      return Interfaces.C.long
+   with Import, Convention => C, External_Name => "write";
+
+   procedure C_Close (Fd : Interfaces.C.int)
+   with Import, Convention => C, External_Name => "close";
+
+   function Since (T0 : Ada.Real_Time.Time) return Duration
+   is (Ada.Real_Time.To_Duration
+         (Ada.Real_Time."-" (Ada.Real_Time.Clock, T0)));
 
    --  Port 9 (discard) on the loopback is as close to guaranteed-refused
    --  as it gets without a network.
@@ -142,6 +168,77 @@ package body Nuntius_Http_Fetch_Curl_Tests is
       Assert (C.In_Flight = 0, "the table drained");
    end Test_Table_Full;
 
+   --  An idle Wait sleeps its full timeout and returns -- neither an
+   --  instant return (the curl_multi_wait no-sockets busy-loop trap)
+   --  nor a wedge.
+   procedure Test_Wait_Timeout (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      pragma Unreferenced (T);
+      C       : Curl.Curl_Client;
+      T0      : constant Ada.Real_Time.Time := Ada.Real_Time.Clock;
+      Elapsed : Duration;
+   begin
+      C.Wait (50, No_Extra_Fds);
+      Elapsed := Since (T0);
+      Assert
+        (Elapsed >= 0.030 and then Elapsed < 2.0,
+         "an idle 50 ms wait slept about that long; took" & Elapsed'Image);
+   end Test_Wait_Timeout;
+
+   --  A readable extra fd ends the wait at once: the consumer's
+   --  inotify and md-wake fds ride exactly this.
+   procedure Test_Wait_Fd_Wake (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      pragma Unreferenced (T);
+      use type Interfaces.C.int;
+      use type Interfaces.C.long;
+      C       : Curl.Curl_Client;
+      Fds     : aliased Fd_Pair;
+      Byte    : aliased Character := 'x';
+      T0      : Ada.Real_Time.Time;
+      Elapsed : Duration;
+   begin
+      Assert (C_Pipe (Fds'Access) = 0, "pipe(2) created");
+      Assert (C_Write (Fds (1), Byte'Address, 1) = 1, "one byte written");
+      T0 := Ada.Real_Time.Clock;
+      C.Wait (5_000, [1 => Integer (Fds (0))]);
+      Elapsed := Since (T0);
+      C_Close (Fds (0));
+      C_Close (Fds (1));
+      Assert
+        (Elapsed < 1.0,
+         "a readable fd ended a 5 s wait at once; took" & Elapsed'Image);
+   end Test_Wait_Fd_Wake;
+
+   --  The event loop's real shape -- perform (Pump), block (Wait),
+   --  repeat -- must surface a refused connect promptly instead of
+   --  sleeping out its waits or wedging.
+   procedure Test_Wait_Drives_A_Transfer
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      C       : Curl.Curl_Client;
+      Id      : Request_Id;
+      Done    : Completion;
+      Got     : Boolean := False;
+      T0      : constant Ada.Real_Time.Time := Ada.Real_Time.Clock;
+      Elapsed : Duration;
+   begin
+      C.Start (Req (Get), Id);
+      Assert (Id /= No_Request, "the transfer started");
+      for K in 1 .. 50 loop
+         C.Pump (Done, Got);
+         exit when Got;
+         C.Wait (200, No_Extra_Fds);
+      end loop;
+      Elapsed := Since (T0);
+      Assert (Got, "the refused transfer completed through pump/wait");
+      Assert
+        (not Done.Ok and then Done.Status = 0,
+         "as a transport failure (Ok False / Status 0)");
+      Assert
+        (Elapsed < 3.0,
+         "without sleeping out the waits; took" & Elapsed'Image);
+   end Test_Wait_Drives_A_Transfer;
+
    overriding
    procedure Register_Tests (T : in out Test) is
    begin
@@ -155,6 +252,14 @@ package body Nuntius_Http_Fetch_Curl_Tests is
         (T, Test_Cancel'Access, "a cancelled transfer never surfaces");
       Register_Routine
         (T, Test_Table_Full'Access, "the in-flight table is bounded");
+      Register_Routine
+        (T, Test_Wait_Timeout'Access, "an idle Wait sleeps its timeout");
+      Register_Routine
+        (T, Test_Wait_Fd_Wake'Access, "a readable extra fd ends the wait");
+      Register_Routine
+        (T,
+         Test_Wait_Drives_A_Transfer'Access,
+         "the pump/wait cycle surfaces a refused connect promptly");
    end Register_Tests;
 
    overriding

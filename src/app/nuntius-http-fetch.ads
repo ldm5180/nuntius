@@ -54,4 +54,19 @@ package Nuntius.Http.Fetch is
 
    function In_Flight (Self : Client) return Natural is abstract;
 
+   --  Extra file descriptors a Wait folds into its poll set (inotify
+   --  watchers, wake pipes): any of them becoming readable ends the
+   --  wait early.
+   type Fd_List is array (Positive range <>) of Integer;
+   No_Extra_Fds : constant Fd_List (1 .. 0) := [];
+
+   --  The event loop's ONE blocking call: block up to Timeout_Ms for
+   --  transfer-socket activity or a readable extra fd.  May return
+   --  early -- activity, a wake, or spuriously -- but never later than
+   --  the timeout; callers re-derive due-ness from their clock.  Wait
+   --  does not drive transfers or read the extra fds: Pump (and the
+   --  caller's own drains) do that on the pass it wakes.
+   procedure Wait (Self : in out Client; Timeout_Ms : Natural; Extra : Fd_List)
+   is abstract;
+
 end Nuntius.Http.Fetch;
