@@ -28,6 +28,11 @@ shipped here.
 - **`Nuntius.Frame_Fifo`** — the bounded, heap-free FIFO of text frames
   behind the websocket adapter, in the SPARK core: its ring arithmetic and
   refusal semantics are *proved*, not unit-tested.
+- **`Nuntius.Fd_Poll` / `Nuntius.Fd_Wake`** — the event-loop fd primitives:
+  a zero-timeout "would a read return now?" check over one descriptor, and
+  an `eventfd(2)`-backed wake token (Linux-only) whose signals coalesce and
+  whose drain leaves the fd quiet. The non-blocking companions to
+  `Nuntius.Http.Fetch.Wait`'s blocking multi-fd poll.
 
 ## Use it
 

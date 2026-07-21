@@ -33,7 +33,11 @@ websocket port always means "reconnect-worthy".
 - `src/app/`  — the ports and adapters: `Nuntius.Http` + `.Curl`,
   `Nuntius.Ws` + `.Native_Client`. All libcurl specifics stay behind `.Curl`
   (including `Register`, so consumers never `with Util.*`); all socket and
-  RFC 6455 framing specifics stay behind `.Native_Client`.
+  RFC 6455 framing specifics stay behind `.Native_Client`. Plus the
+  event-loop fd primitives `Nuntius.Fd_Poll` (zero-timeout "would a read
+  return now?" check) and `Nuntius.Fd_Wake` (`eventfd(2)` wake token,
+  Linux-only) — the non-blocking companions to `Nuntius.Http.Fetch.Wait`'s
+  blocking multi-fd poll.
 - `tests/` — AUnit suite (`test_nuntius.gpr`, driver `test_runner.adb`).
 - `example/` — standalone demo mains (`http_get`, `ws_listen`) showing the
   consumer story end to end; built in CI, run manually against real

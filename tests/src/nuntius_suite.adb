@@ -1,5 +1,7 @@
 with AUnit.Test_Cases;
 
+with Nuntius_Fd_Poll_Tests;
+with Nuntius_Fd_Wake_Tests;
 with Nuntius_Frame_Fifo_Tests;
 with Nuntius_Http_Curl_Tests;
 with Nuntius_Http_Fetch_Curl_Tests;
@@ -22,6 +24,8 @@ package body Nuntius_Suite is
       Add (new Nuntius_Ws_Native_Client_Tests.Test);
       Add (new Nuntius_Http_Curl_Tests.Test);
       Add (new Nuntius_Http_Fetch_Curl_Tests.Test);
+      Add (new Nuntius_Fd_Poll_Tests.Test);
+      Add (new Nuntius_Fd_Wake_Tests.Test);
       return Result;
    end Suite;
 
