@@ -6,6 +6,9 @@ with Nuntius_Frame_Fifo_Tests;
 with Nuntius_Http_Curl_Tests;
 with Nuntius_Http_Fetch_Curl_Tests;
 with Nuntius_Rfc6455_Tests;
+with Nuntius_Web_Files_Tests;
+with Nuntius_Web_Server_Tests;
+with Nuntius_Web_Tests;
 with Nuntius_Ws_Native_Client_Tests;
 
 package body Nuntius_Suite is
@@ -26,6 +29,9 @@ package body Nuntius_Suite is
       Add (new Nuntius_Http_Fetch_Curl_Tests.Test);
       Add (new Nuntius_Fd_Poll_Tests.Test);
       Add (new Nuntius_Fd_Wake_Tests.Test);
+      Add (new Nuntius_Web_Tests.Test);
+      Add (new Nuntius_Web_Files_Tests.Test);
+      Add (new Nuntius_Web_Server_Tests.Test);
       return Result;
    end Suite;
 

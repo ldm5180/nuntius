@@ -33,6 +33,14 @@ shipped here.
   an `eventfd(2)`-backed wake token (Linux-only) whose signals coalesce and
   whose drain leaves the fd quiet. The non-blocking companions to
   `Nuntius.Http.Fetch.Wait`'s blocking multi-fd poll.
+- **`Nuntius.Web` + `.Server` + `.Files`** — the serving side: a proven
+  HTTP/1.1 request-line parser and byte-exact response head in the SPARK
+  core, and a generic serial GET server over them (poll-accept, never
+  parks in `accept(2)`; `Connection: close`; bounded IO; quiet drops for
+  probes and dribblers). Routing is the consumer's `Handle` formal —
+  the crate ships no route table. `On_Listening` reports the bound port,
+  so tests serve on port 0; `Files.Read_Capped` reads static content
+  whole or refuses (`Read_Ok`/`Missing`/`Oversized`).
 
 ## Use it
 

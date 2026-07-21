@@ -27,7 +27,9 @@ websocket port always means "reconnect-worthy".
 
 ## Layout
 
-- `src/core/` — the SPARK core (`Nuntius.Frame_Fifo`, `Nuntius.Rfc6455`):
+- `src/core/` — the SPARK core (`Nuntius.Frame_Fifo`, `Nuntius.Rfc6455`,
+  `Nuntius.Web` — the HTTP/1.1 request-line parser and byte-exact response
+  head; ROUTING is deliberately absent, it is the consumer's policy):
   every unit carries `SPARK_Mode`, does zero IO, and may `with` only other
   core units (and `Sml.*` where a unit is machine-backed).
 - `src/app/`  — the ports and adapters: `Nuntius.Http` + `.Curl`,
@@ -37,7 +39,14 @@ websocket port always means "reconnect-worthy".
   event-loop fd primitives `Nuntius.Fd_Poll` (zero-timeout "would a read
   return now?" check) and `Nuntius.Fd_Wake` (`eventfd(2)` wake token,
   Linux-only) — the non-blocking companions to `Nuntius.Http.Fetch.Wait`'s
-  blocking multi-fd poll.
+  blocking multi-fd poll. And the serving side: `Nuntius.Web.Server`, a
+  generic serial GET server (poll-accept — never parks in accept(2) —
+  Connection: close, 2 s IO timeouts, quiet probe drops) whose routing,
+  logging, and stop/sleep all arrive as formals (`Handle` is called once
+  per well-formed GET; `On_Listening` reports the bound port so tests
+  bind port 0), plus `Nuntius.Web.Files` (capped whole-file read with
+  distinct Read_Ok/Missing/Oversized outcomes — oversized is refused
+  whole, never truncated).
 - `tests/` — AUnit suite (`test_nuntius.gpr`, driver `test_runner.adb`).
 - `example/` — standalone demo mains (`http_get`, `ws_listen`) showing the
   consumer story end to end; built in CI, run manually against real
