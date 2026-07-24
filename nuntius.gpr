@@ -1,14 +1,14 @@
 with "config/nuntius_config.gpr";
 with "utilada_curl";
+with "aws";
 with "sml";
 
 --  Nuntius: narrow client-side transport ports (HTTP verbs, websocket
---  frames) with production adapters over libcurl (HTTP) and a hand-rolled
---  RFC 6455 client over GNAT.Sockets (websocket).  The ports and adapters
---  live in src/app; src/core holds the SPARK-proven buffering (the frame
---  FIFO) and wire codec (Nuntius.Rfc6455) and may depend on nothing but
---  other core units.  proof/proof.gpr sources src/core directly and withs
---  nothing, keeping foreign code out of the proof tree.
+--  frames) with production adapters over libcurl and the AWS crate.  The
+--  ports and adapters live in src/app; src/core holds the SPARK-proven
+--  buffering (the websocket adapter's bounded frame FIFO) and may depend on
+--  nothing but other core units.  proof/proof.gpr sources src/core directly
+--  and withs nothing, keeping foreign code out of the proof tree.
 project Nuntius is
 
    for Library_Name use "Nuntius";

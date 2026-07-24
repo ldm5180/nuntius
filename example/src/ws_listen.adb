@@ -1,7 +1,7 @@
 with Ada.Command_Line;
 with Ada.Text_IO; use Ada.Text_IO;
 
-with Nuntius.Ws.Native_Client;
+with Nuntius.Ws.Aws_Client;
 
 --  Dial a websocket endpoint, optionally send one text frame (a subscribe
 --  payload, say), and print the first few inbound text frames.  Shows the
@@ -17,7 +17,7 @@ procedure Ws_Listen is
    Max_Frame : constant := 4_096;
 
    package Clients is new
-     Nuntius.Ws.Native_Client (Ring_Depth => 64, Max_Frame_Bytes => Max_Frame);
+     Nuntius.Ws.Aws_Client (Ring_Depth => 64, Max_Frame_Bytes => Max_Frame);
 
    Frames_To_Show : constant := 5;
 
