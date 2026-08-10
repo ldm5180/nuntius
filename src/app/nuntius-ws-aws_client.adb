@@ -15,7 +15,20 @@ package body Nuntius.Ws.Aws_Client is
       --  free everything twice, since Finalize still runs on Dispose.
       --  Safe on a live, a failed, or a never-dialed object.
       if Self.Sock /= null then
-         Dispose (Self.Sock);
+         begin
+            Dispose (Self.Sock);
+         exception
+            when others =>
+               --  A dial that failed mid-TLS-handshake leaves AWS's
+               --  state half-built, and its Finalize then raises out of
+               --  Dispose as PROGRAM_ERROR (finalize/adjust) -- which
+               --  must not escape: the caller is a reconnect loop, and
+               --  this exception killed a whole consumer task in
+               --  production.  The pointer is left non-null on a raise,
+               --  so null it by hand; leaking one dead socket beats
+               --  crashing the lane that owns the redial.
+               Self.Sock := null;
+         end;
       end if;
    end Free_Socket;
 
