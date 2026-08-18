@@ -276,40 +276,47 @@ package body Nuntius_Ws_Native_Client_Tests is
          end loop;
       end;
 
-      Send_Bytes
-        (Peer,
-         [Character'Pos ('H'),
-          Character'Pos ('T'),
-          Character'Pos ('T'),
-          Character'Pos ('P'),
-          Character'Pos ('/'),
-          Character'Pos ('1'),
-          Character'Pos ('.'),
-          Character'Pos ('1'),
-          Character'Pos (' '),
-          Character'Pos ('1'),
-          Character'Pos ('0'),
-          Character'Pos ('1'),
-          13,
-          10,
-          13,
-          10]);
-
-      --  All frames in ONE write so they land in a single oversized recv:
-      --  unmasked single-byte text frames [FIN|text, len 1, index].
+      --  The 101 head AND every frame in ONE write, so head, burst and
+      --  close land in the client's kernel buffer together and its
+      --  handshake read finds the whole burst GLUED to the head -- the
+      --  shape a fast localhost server (the Terminal) produces, and the
+      --  hostile case for both the handshake (surplus past the
+      --  accumulator) and the read pump (one oversized recv).  Unmasked
+      --  single-byte text frames [FIN|text, len 1, index].
       declare
+         Head : constant Stream_Element_Array :=
+           [Character'Pos ('H'),
+            Character'Pos ('T'),
+            Character'Pos ('T'),
+            Character'Pos ('P'),
+            Character'Pos ('/'),
+            Character'Pos ('1'),
+            Character'Pos ('.'),
+            Character'Pos ('1'),
+            Character'Pos (' '),
+            Character'Pos ('1'),
+            Character'Pos ('0'),
+            Character'Pos ('1'),
+            13,
+            10,
+            13,
+            10];
          Blob :
-           Stream_Element_Array (1 .. Stream_Element_Offset (Burst_Count * 3));
+           Stream_Element_Array
+             (1 .. Head'Length + Stream_Element_Offset (Burst_Count * 3) + 2);
       begin
+         Blob (1 .. Head'Length) := Head;
          for I in 0 .. Burst_Count - 1 loop
-            Blob (Stream_Element_Offset (I * 3 + 1)) := 16#81#;
-            Blob (Stream_Element_Offset (I * 3 + 2)) := 16#01#;
-            Blob (Stream_Element_Offset (I * 3 + 3)) := Stream_Element (I);
+            Blob (Head'Length + Stream_Element_Offset (I * 3 + 1)) := 16#81#;
+            Blob (Head'Length + Stream_Element_Offset (I * 3 + 2)) := 16#01#;
+            Blob (Head'Length + Stream_Element_Offset (I * 3 + 3)) :=
+              Stream_Element (I);
          end loop;
+         Blob (Blob'Last - 1) := 16#88#;  --  close
+         Blob (Blob'Last) := 16#00#;
          Send_Bytes (Peer, Blob);
       end;
 
-      Send_Bytes (Peer, [16#88#, 16#00#]);  --  close
       Close_Socket (Peer);
       Close_Socket (Listen);
    exception
@@ -354,6 +361,103 @@ package body Nuntius_Ws_Native_Client_Tests is
       Burst_Ws.Close (C);
    end Test_Burst;
 
+   --  Serve the upgrade like Server, but only after a pause LONGER than
+   --  the client's Poll_Slice (its socket receive timeout) and well
+   --  inside Idle_Limit.  A scheduler hiccup on a loaded CI box puts
+   --  every real server here occasionally -- the dial must wait out
+   --  Idle_Limit, not give up at the first empty poll slice.
+   task type Slow_Server is
+      entry Serve (Listener : Socket_Type);
+   end Slow_Server;
+
+   task body Slow_Server is
+      Listen : Socket_Type;
+      Peer   : Socket_Type;
+      From   : Sock_Addr_Type;
+   begin
+      accept Serve (Listener : Socket_Type) do
+         Listen := Listener;
+      end Serve;
+      Accept_Socket (Listen, Peer, From);
+
+      declare
+         Buf  : Stream_Element_Array (1 .. 1_024);
+         Last : Stream_Element_Offset;
+         Seen : Natural := 0;
+      begin
+         loop
+            Receive_Socket (Peer, Buf, Last);
+            exit when Last < Buf'First;
+            Seen := Seen + Natural (Last);
+            exit when Seen >= 4;
+         end loop;
+      end;
+
+      --  Three poll slices of silence: past one Receive_Timeout, far
+      --  under Idle_Limit (2.0).
+      delay 0.75;
+
+      Send_Bytes
+        (Peer,
+         [Character'Pos ('H'),
+          Character'Pos ('T'),
+          Character'Pos ('T'),
+          Character'Pos ('P'),
+          Character'Pos ('/'),
+          Character'Pos ('1'),
+          Character'Pos ('.'),
+          Character'Pos ('1'),
+          Character'Pos (' '),
+          Character'Pos ('1'),
+          Character'Pos ('0'),
+          Character'Pos ('1'),
+          13,
+          10,
+          13,
+          10]);
+      --  One text frame so the exchange proves the stream survived.
+      Send_Bytes (Peer, [16#81#, 16#01#, Character'Pos ('s')]);
+      Send_Bytes (Peer, [16#88#, 16#00#]);  --  close
+      Close_Socket (Peer);
+      Close_Socket (Listen);
+   exception
+      when others =>
+         Close_Socket (Peer);
+   end Slow_Server;
+
+   procedure Test_Slow_Handshake (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Listen : Socket_Type;
+      Srv    : Slow_Server;
+      C      : Ws.Client;
+      Buf    : String (1 .. 32);
+      Last   : Natural;
+      Ok     : Boolean;
+      Port   : Port_Type;
+   begin
+      Create_Socket (Listen);
+      Set_Socket_Option (Listen, Socket_Level, (Reuse_Address, True));
+      Bind_Socket (Listen, (Family_Inet, Loopback_Inet_Addr, 0));
+      Listen_Socket (Listen);
+      Port := Get_Socket_Name (Listen).Port;
+
+      Srv.Serve (Listen);
+
+      Ws.Connect
+        (C,
+         "ws://127.0.0.1:" & Trim (Port_Type'Image (Port), Both) & "/s",
+         Ok);
+      Assert (Ok, "slow handshake: the dial waits out Idle_Limit");
+
+      Ws.Receive (C, Buf, Last, Ok);
+      Assert
+        (Ok and then Last = 1 and then Buf (1) = 's',
+         "slow handshake: the frame behind it still arrives");
+
+      Ws.Close (C);
+   end Test_Slow_Handshake;
+
    overriding
    procedure Register_Tests (T : in out Test) is
    begin
@@ -369,6 +473,10 @@ package body Nuntius_Ws_Native_Client_Tests is
         (T,
          Test_Burst'Access,
          "burst of many frames in one read: none dropped, in order");
+      Register_Routine
+        (T,
+         Test_Slow_Handshake'Access,
+         "a handshake reply slower than one poll slice still connects");
    end Register_Tests;
 
    overriding

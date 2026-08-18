@@ -494,6 +494,7 @@ package body Nuntius.Ws.Native_Client is
       Buf      : String (1 .. 8_192) := [others => ASCII.NUL];
       Len      : Natural := 0;
       Boundary : Natural := 0;
+      Idle     : Duration := 0.0;
    begin
       Ok := False;
 
@@ -528,14 +529,27 @@ package body Nuntius.Ws.Native_Client is
          exit when Boundary > 0 or else Len = Buf'Last;
 
          declare
+            --  Cap the read at what the accumulator can hold: a fast
+            --  server (the localhost Terminal) answers the upgrade and
+            --  streams frames in the same burst, so an uncapped read
+            --  could pull more glued frame bytes than Accum has room
+            --  for -- and the surplus, already out of the kernel
+            --  buffer, would have nowhere to go but the floor (the
+            --  same desync Read_Some caps against).  The head takes a
+            --  few more reads on a tiny instantiation; a dial pays
+            --  that once.
+            Cap   : constant Ada.Streams.Stream_Element_Offset :=
+              Ada.Streams.Stream_Element_Offset
+                (Natural'Min (2_048, Self.Accum'Length));
             Sbuf  : Ada.Streams.Stream_Element_Array (1 .. 2_048);
             SLast : Ada.Streams.Stream_Element_Offset;
          begin
-            GNAT.Sockets.Receive_Socket (Self.Sock, Sbuf, SLast);
+            GNAT.Sockets.Receive_Socket (Self.Sock, Sbuf (1 .. Cap), SLast);
             if SLast < Sbuf'First then
                return;  --  closed before the head completed
 
             end if;
+            Idle := 0.0;
             declare
                N    : constant Natural := Natural (SLast);
                Room : constant Natural := Buf'Last - Len;
@@ -549,8 +563,24 @@ package body Nuntius.Ws.Native_Client is
                Len := Len + C;
             end;
          exception
+            when E : GNAT.Sockets.Socket_Error =>
+               --  The receive timeout is Poll_Slice, not a deadline:
+               --  a server slower than one slice (a loaded box, a
+               --  Terminal still starting) gets the full Idle_Limit,
+               --  the same budget the read pump gives a quiet stream.
+               if GNAT.Sockets.Resolve_Exception (E)
+                 = GNAT.Sockets.Resource_Temporarily_Unavailable
+               then
+                  Idle := Idle + Poll_Slice;
+                  if Idle >= Idle_Limit then
+                     return;  --  silent past the limit: no upgrade
+
+                  end if;
+               else
+                  return;  --  error before the head completed
+               end if;
             when others =>
-               return;  --  timeout/error before the head completed
+               return;  --  error before the head completed
          end;
       end loop;
 
