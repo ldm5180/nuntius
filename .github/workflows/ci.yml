@@ -22,6 +22,10 @@ jobs:
   build-and-test:
     name: Build & test
     runs-on: ubuntu-latest
+    # A hung step (an apt mirror stall, a wedged prover) must fail in
+    # minutes, not burn the runner's 6-hour cap -- seen 2026-08-18,
+    # when apt-get update hung the coverage job for the full 6 hours.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
 
@@ -59,7 +63,7 @@ jobs:
       - name: Install libcurl development headers
         # utilada_curl links against libcurl; Alire's `libcurl` external
         # resolves via dpkg, so the -dev package must be present.
-        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+        run: sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && sudo apt-get -o Acquire::Retries=3 install -y libcurl4-openssl-dev
 
       - name: Build the library (validation profile)
         # The `validation` profile adds -gnatwe (warnings are errors),
@@ -94,6 +98,10 @@ jobs:
   proof:
     name: SPARK proof
     runs-on: ubuntu-latest
+    # A hung step (an apt mirror stall, a wedged prover) must fail in
+    # minutes, not burn the runner's 6-hour cap -- seen 2026-08-18,
+    # when apt-get update hung the coverage job for the full 6 hours.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
 
@@ -122,7 +130,7 @@ jobs:
             alire-deps-${{ runner.os }}-${{ env.ALR_TOOLVER }}-
 
       - name: Install libcurl development headers
-        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+        run: sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && sudo apt-get -o Acquire::Retries=3 install -y libcurl4-openssl-dev
 
       - name: Build
         # Populates the config/ tree so the proof project's sources compile
@@ -145,6 +153,10 @@ jobs:
   format:
     name: Formatting (gnatformat --check)
     runs-on: ubuntu-latest
+    # A hung step (an apt mirror stall, a wedged prover) must fail in
+    # minutes, not burn the runner's 6-hour cap -- seen 2026-08-18,
+    # when apt-get update hung the coverage job for the full 6 hours.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
 
