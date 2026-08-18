@@ -68,6 +68,25 @@ package body Nuntius_Web_Tests is
          "an empty line is rejected");
    end Test_Parse_Rejects_Garbage;
 
+   --  A real OAuth redirect target is /auth?code=<~90 escaped chars>
+   --  &session=<uuid>.  A target past Max_Target answers 400 BEFORE the
+   --  consumer's Handle runs, so the code would be silently lost: the
+   --  cap has to carry a generous margin over the shape seen in the
+   --  wild.
+   procedure Test_Parse_Long_Oauth_Target
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Code   : constant String (1 .. 300) := [others => 'c'];
+      Target : constant String := "/auth?code=" & Code & "&session=abc";
+      R      : constant Nuntius.Web.Request :=
+        Nuntius.Web.Parse_Request
+          ("GET " & Target & " HTTP/1.1" & CRLF & CRLF);
+   begin
+      Assert (R.Well_Formed, "a 300-byte OAuth target parses");
+      Assert (Nuntius.Web.Target_Of (R) = Target, "the target survives whole");
+   end Test_Parse_Long_Oauth_Target;
+
    procedure Test_Response_Head_Golden
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
@@ -119,6 +138,10 @@ package body Nuntius_Web_Tests is
         (T,
          Test_Parse_Rejects_Garbage'Access,
          "Parse_Request rejects malformed request lines");
+      Register_Routine
+        (T,
+         Test_Parse_Long_Oauth_Target'Access,
+         "Parse_Request carries a full OAuth redirect target");
       Register_Routine
         (T,
          Test_Response_Head_Golden'Access,

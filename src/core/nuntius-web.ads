@@ -14,7 +14,11 @@ is
    --  cookies from other dev servers could inflate headers; the cap is
    --  the one constant to bump if 400s ever show up in practice.
    Max_Request_Bytes : constant := 4_096;
-   Max_Target        : constant := 256;
+   --  The target cap has to hold a full OAuth redirect target
+   --  (/auth?code=<escaped>&session=<uuid>), which is why it is
+   --  generous: a target past the cap answers 400 BEFORE the consumer's
+   --  Handle runs, so an authorization code would be lost silently.
+   Max_Target        : constant := 2_048;
 
    type Method_Kind is (Get, Other);
 
