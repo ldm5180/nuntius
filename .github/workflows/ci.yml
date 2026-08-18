@@ -75,6 +75,15 @@ jobs:
         # network beyond loopback connection-refusals.
         run: alr --non-interactive test
 
+      - name: Show the test log on failure
+        # `alr test` swallows the runner's stdout into a local file and
+        # prints only "check the log" -- which the job then throws away
+        # with the workspace, leaving a red CI with no failing assertion
+        # in it.  Dump it here so a failure is diagnosable from the run
+        # page alone.
+        if: failure()
+        run: cat alire/alr_test_local.log
+
       - name: Build the examples (both modes)
         # Built, not run: the examples talk to real endpoints (an HTTP GET,
         # a websocket dial), so running them in CI would hang the job on
