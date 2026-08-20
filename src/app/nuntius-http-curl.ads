@@ -33,6 +33,16 @@ package Nuntius.Http.Curl is
       Ok            : out Boolean);
 
    overriding
+   procedure Put_Json
+     (Self          : in out Curl_Transport;
+      URL           : String;
+      Content       : String;
+      Authorization : String;
+      Status        : out Natural;
+      Reply         : out Unbounded_String;
+      Ok            : out Boolean);
+
+   overriding
    procedure Get
      (Self          : in out Curl_Transport;
       URL           : String;

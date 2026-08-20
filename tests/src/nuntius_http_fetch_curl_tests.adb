@@ -48,9 +48,11 @@ package body Nuntius_Http_Fetch_Curl_Tests is
    function Req (Verb : Method) return Request
    is (Verb          => Verb,
        URL           => To_Unbounded_String (Refused_URL),
-       Content       => To_Unbounded_String (if Verb = Post then "{}" else ""),
+       Content       =>
+         To_Unbounded_String (if Verb in Post | Put then "{}" else ""),
        Content_Type  =>
-         To_Unbounded_String (if Verb = Post then "application/json" else ""),
+         To_Unbounded_String
+           (if Verb in Post | Put then "application/json" else ""),
        Authorization => To_Unbounded_String ("Bearer x"),
        Timeout_Ms    => 2_000);
 
@@ -79,14 +81,17 @@ package body Nuntius_Http_Fetch_Curl_Tests is
       Assert (C.In_Flight = 0, "and reports no transfers");
    end Test_Empty_Pump;
 
-   --  Three concurrent verbs against a refused port: three failure
-   --  completions, ids intact, table drained.
+   --  Every verb against a refused port, concurrently: one failure
+   --  completion each, ids intact, table drained.  All four are here on
+   --  purpose -- a verb that sets a libcurl option the others do not
+   --  (PUT sets both Opt_Post and Opt_Customrequest) is exactly the one
+   --  that could wedge a transfer rather than failing it.
    procedure Test_Refused_Completions
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
       C          : Curl.Curl_Client;
-      Ids        : array (1 .. 3) of Request_Id;
+      Ids        : array (1 .. 4) of Request_Id;
       Done       : Completion;
       Got        : Boolean;
       Seen       : Natural := 0;
@@ -95,12 +100,13 @@ package body Nuntius_Http_Fetch_Curl_Tests is
    begin
       C.Start (Req (Get), Ids (1));
       C.Start (Req (Post), Ids (2));
-      C.Start (Req (Delete), Ids (3));
+      C.Start (Req (Put), Ids (3));
+      C.Start (Req (Delete), Ids (4));
       for K in Ids'Range loop
          Assert (Ids (K) /= No_Request, "start" & K'Image & " took a slot");
          Id_Total := Id_Total + Natural (Ids (K));
       end loop;
-      Assert (C.In_Flight = 3, "three transfers in flight");
+      Assert (C.In_Flight = 4, "four transfers in flight");
 
       for K in Ids'Range loop
          Pump_Until (C, Done, Got);
@@ -115,7 +121,7 @@ package body Nuntius_Http_Fetch_Curl_Tests is
       end loop;
 
       Assert
-        (Seen = 3 and then Seen_Total = Id_Total,
+        (Seen = 4 and then Seen_Total = Id_Total,
          "every started id completed exactly once");
       Assert (C.In_Flight = 0, "the table drained");
       C.Pump (Done, Got);

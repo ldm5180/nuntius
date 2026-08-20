@@ -37,6 +37,9 @@ package body Nuntius_Http_Curl_Tests is
       Assert (not Ok and then Status = 0, "refused POST json: Ok False");
       Assert (Location = Null_Unbounded_String, "no Location on failure");
 
+      Transport.Put_Json (Refused_URL, "{}", "Bearer x", Status, Reply, Ok);
+      Assert (not Ok and then Status = 0, "refused PUT json: Ok False");
+
       Transport.Get (Refused_URL, "Bearer x", Status, Reply, Ok);
       Assert (not Ok and then Status = 0, "refused GET: Ok False");
 

@@ -90,6 +90,35 @@ package body Nuntius.Http.Curl is
    end Post_Json;
 
    overriding
+   procedure Put_Json
+     (Self          : in out Curl_Transport;
+      URL           : String;
+      Content       : String;
+      Authorization : String;
+      Status        : out Natural;
+      Reply         : out Unbounded_String;
+      Ok            : out Boolean)
+   is
+      pragma Unreferenced (Self);
+      Client   : Util.Http.Clients.Client;
+      Response : Util.Http.Clients.Response;
+   begin
+      Client.Set_Timeout (Request_Timeout);
+      Client.Set_Header ("Content-Type", Json_Content_Type);
+      Client.Set_Header ("Authorization", Authorization);
+      Client.Put (URL, Content, Response);
+
+      Status := Response.Get_Status;
+      Reply := To_Unbounded_String (Response.Get_Body);
+      Ok := True;
+   exception
+      when others =>
+         Status := 0;
+         Reply := Null_Unbounded_String;
+         Ok := False;
+   end Put_Json;
+
+   overriding
    procedure Get
      (Self          : in out Curl_Transport;
       URL           : String;

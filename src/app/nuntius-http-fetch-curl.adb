@@ -303,6 +303,15 @@ package body Nuntius.Http.Fetch.Curl is
             Best_Effort (Setopt_Long (E, Opt_Post, 1));
             Set_String (E, Opt_Copypostfields, To_String (R.Content));
 
+         when Put    =>
+            --  A body, then the method OVERRIDDEN to PUT.  Opt_Post is
+            --  what makes libcurl send the copied post fields at all,
+            --  and Opt_Customrequest only renames the method -- so the
+            --  order matters and the pair is not redundant.
+            Best_Effort (Setopt_Long (E, Opt_Post, 1));
+            Set_String (E, Opt_Copypostfields, To_String (R.Content));
+            Set_String (E, Opt_Customrequest, "PUT");
+
          when Delete =>
             Set_String (E, Opt_Customrequest, "DELETE");
       end case;

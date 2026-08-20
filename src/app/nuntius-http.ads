@@ -2,10 +2,17 @@ with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
 
 --  The HTTP client port: the narrow set of shapes a REST-and-OAuth
 --  application needs -- a form-encoded POST for token endpoints, and a
---  JSON POST / GET / DELETE with a Bearer token for the API proper.
---  Tests plug in a recording fake; production plugs in Nuntius.Http.Curl.
---  Keeping the port this narrow is what keeps every consumer test
---  offline.
+--  JSON POST / PUT / GET / DELETE with a Bearer token for the API
+--  proper.  Tests plug in a recording fake; production plugs in
+--  Nuntius.Http.Curl.  Keeping the port this narrow is what keeps every
+--  consumer test offline.
+--
+--  Narrow is not the same as minimal.  Each verb here earns its place by
+--  being a shape a REST API actually requires rather than prefers: PUT
+--  is here because an idempotent REPLACE of an existing resource cannot
+--  be expressed as a POST without changing what the server does with it,
+--  and an application that had to fall back to delete-then-create would
+--  be trading an atomic operation for a race.
 
 package Nuntius.Http is
 
@@ -34,6 +41,23 @@ package Nuntius.Http is
       Status        : out Natural;
       Reply         : out Unbounded_String;
       Location      : out Unbounded_String;
+      Ok            : out Boolean)
+   is abstract;
+
+   --  A JSON PUT with a Bearer token: replace an existing resource.
+   --
+   --  It returns no Location, and that asymmetry with Post_Json is the
+   --  point rather than an oversight -- a PUT names the resource in its
+   --  own URL, so there is no created-resource location for the server
+   --  to report.  What a replacement's response body says about it is
+   --  the caller's to read.
+   procedure Put_Json
+     (Self          : in out Transport;
+      URL           : String;
+      Content       : String;
+      Authorization : String;
+      Status        : out Natural;
+      Reply         : out Unbounded_String;
       Ok            : out Boolean)
    is abstract;
 

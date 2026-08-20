@@ -11,12 +11,15 @@ package Nuntius.Http.Fetch is
    type Request_Id is new Natural;
    No_Request : constant Request_Id := 0;
 
-   type Method is (Get, Post, Delete);
+   --  Put carries a body like Post and names an existing resource like
+   --  Delete: it is how a caller REPLACES one atomically, without the
+   --  delete-then-create race that is the only alternative.
+   type Method is (Get, Post, Put, Delete);
 
    type Request is record
       Verb          : Method := Get;
       URL           : Unbounded_String;
-      Content       : Unbounded_String;  --  POST body; ignored otherwise
+      Content       : Unbounded_String;  --  POST/PUT body; ignored otherwise
       Content_Type  : Unbounded_String;  --  empty => no header
       Authorization : Unbounded_String;  --  empty => no header
       Timeout_Ms    : Positive := 30_000;
