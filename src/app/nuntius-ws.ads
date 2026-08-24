@@ -63,4 +63,28 @@ package Nuntius.Ws is
 
    function Losses (Self : Transport) return Loss_Report is abstract;
 
+   ---------------------------------------------------------------------
+   --  Optional diagnostics
+   ---------------------------------------------------------------------
+
+   --  Why the last failed operation failed, for adapters that can say.
+   --
+   --  A SECOND interface rather than a new Transport primitive, so no
+   --  existing adapter or test fake owes an implementation: a consumer
+   --  that wants the reason membership-tests for it --
+   --
+   --     if Ws.all in Nuntius.Ws.Diagnosable'Class then ...
+   --
+   --  -- and one that does not keeps dialing on Ok alone.  It exists
+   --  because Ok = False deliberately absorbs the adapter's exception
+   --  (the port contract; a reconnect loop must not die), and absorbing
+   --  the MESSAGE with it once cost a real outage its diagnosis: a
+   --  total TLS failure read as nothing but "connect failed" retrying
+   --  forever, and the reason took a throwaway main to see.
+   type Diagnosable is limited interface;
+
+   --  The stored reason ("" when nothing has failed since the last
+   --  success).  Text for a log line, never for dispatching on.
+   function Last_Error (Self : Diagnosable) return String is abstract;
+
 end Nuntius.Ws;

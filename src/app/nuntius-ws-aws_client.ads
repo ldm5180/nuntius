@@ -42,7 +42,9 @@ generic
 package Nuntius.Ws.Aws_Client
 is
 
-   type Client is limited new Nuntius.Ws.Transport with private;
+   type Client is limited
+     new Nuntius.Ws.Transport
+     and Nuntius.Ws.Diagnosable with private;
 
    overriding
    procedure Connect (Self : in out Client; URL : String; Ok : out Boolean);
@@ -63,6 +65,12 @@ is
 
    overriding
    function Losses (Self : Client) return Nuntius.Ws.Loss_Report;
+
+   --  Why the last dial failed ("" when it did not): the exception
+   --  Connect absorbed into Ok = False, kept readable.  See
+   --  Nuntius.Ws.Diagnosable.
+   overriding
+   function Last_Error (Self : Client) return String;
 
 private
 
@@ -89,6 +97,8 @@ private
    --  exactly once, and a pristine object's field is null (a safe no-op).
    type Socket_Access is access Socket_Type;
 
+   Max_Error : constant := 512;
+
    overriding
    procedure On_Message (Socket : in out Socket_Type; Message : String);
 
@@ -98,9 +108,18 @@ private
    overriding
    procedure On_Error (Socket : in out Socket_Type; Message : String);
 
-   type Client is limited new Nuntius.Ws.Transport with record
+   --  The stored dial failure, bounded so the record needs no heap: an
+   --  exception message is a sentence, and one that is not fits at 512.
+   type Client is limited new Nuntius.Ws.Transport and Nuntius.Ws.Diagnosable
+   with record
       Sock      : Socket_Access;
       Connected : Boolean := False;
+      Err       : String (1 .. Max_Error) := [others => ' '];
+      Err_Last  : Natural := 0;
    end record;
+
+   overriding
+   function Last_Error (Self : Client) return String
+   is (Self.Err (1 .. Self.Err_Last));
 
 end Nuntius.Ws.Aws_Client;

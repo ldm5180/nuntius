@@ -1,6 +1,59 @@
+with Ada.Exceptions;
 with Ada.Unchecked_Deallocation;
 
+with AWS.Net.SSL;
+
 package body Nuntius.Ws.Aws_Client is
+
+   --  CLIENT TLS DEFAULTS, ARMED BY THE ADAPTER THAT NEEDS THEM.
+   --
+   --  AWS builds a client's SSL config from its own defaults, and
+   --  AWS.Default.Client_Certificate is "cert.pem" -- a file that
+   --  belongs to a SERVER and does not exist beside a client.  Left
+   --  alone, every wss:// dial dies locally with
+   --
+   --    AWS.NET.SOCKET_ERROR : Key file "cert.pem" error.
+   --
+   --  before a byte reaches the wire.  Every consumer of this adapter
+   --  had to discover that and make the Initialize_Default_Config call
+   --  itself, in its own boot code, from a diagnosis that cost a
+   --  throwaway main -- so the dial's owner now makes it.  Subsequent
+   --  calls are documented no-ops, so a consumer that must supply a
+   --  REAL client certificate simply initializes its config before the
+   --  first dial here, and this call changes nothing.
+   --
+   --  Guarded per instance (the call itself is process-wide and
+   --  idempotent), and only on the way to a wss dial: a plain ws://
+   --  consumer on an SSL-less AWS build (SOCKET=std) must not pay an
+   --  SSL elaboration it will never use.  Failures fall through to the
+   --  dial, whose own error then says what is actually wrong.
+   Tls_Defaults_Armed : Boolean := False;
+
+   procedure Ensure_Tls_Defaults is
+   begin
+      if Tls_Defaults_Armed then
+         return;
+      end if;
+      Tls_Defaults_Armed := True;
+      AWS.Net.SSL.Initialize_Default_Config
+        (Server_Certificate => "", Server_Key => "", Client_Certificate => "");
+   exception
+      when others =>
+         null;  --  an SSL-less build: the dial will say so, readably
+   end Ensure_Tls_Defaults;
+
+   procedure Note_Error
+     (Self : in out Client; E : Ada.Exceptions.Exception_Occurrence)
+   is
+      Text : constant String :=
+        Ada.Exceptions.Exception_Name (E)
+        & ": "
+        & Ada.Exceptions.Exception_Message (E);
+      Keep : constant Natural := Natural'Min (Text'Length, Max_Error);
+   begin
+      Self.Err (1 .. Keep) := Text (Text'First .. Text'First + Keep - 1);
+      Self.Err_Last := Keep;
+   end Note_Error;
 
    procedure Dispose is new
      Ada.Unchecked_Deallocation (Socket_Type, Socket_Access);
@@ -82,15 +135,25 @@ package body Nuntius.Ws.Aws_Client is
       --  dial sidesteps both: Free_Socket runs once per object.
       Close (Self);
       Free_Socket (Self);
+      Self.Err_Last := 0;
+      if URL'Length >= 3
+        and then URL (URL'First .. URL'First + 2) in "wss" | "WSS"
+      then
+         Ensure_Tls_Defaults;
+      end if;
       Self.Sock := new Socket_Type;
       AWS.Net.WebSocket.Connect (Self.Sock.all, URL);
       Self.Connected := True;
       Ok := True;
    exception
-      when others =>
+      when E : others =>
          --  A refused dial allocated on the way in; drop the whole object
          --  now so a reconnect storm cannot leak and the next dial starts
-         --  clean.
+         --  clean.  The exception is absorbed (the port contract: a
+         --  reconnect loop must not die) but its MESSAGE is kept --
+         --  Last_Error -- because absorbing the reason once cost a total
+         --  TLS failure its diagnosis.
+         Note_Error (Self, E);
          Free_Socket (Self);
          Self.Connected := False;
          Ok := False;
