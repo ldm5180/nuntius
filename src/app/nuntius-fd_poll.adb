@@ -30,4 +30,18 @@ package body Nuntius.Fd_Poll is
       return C_Poll (P'Access, 1, 0) > 0 and then (P.Revents and Pollin) /= 0;
    end Readable;
 
+   procedure Wait (Fd : Integer; Timeout_Ms : Natural) is
+      P      : aliased Pollfd :=
+        (Fd => Interfaces.C.int (Fd), Events => Pollin, Revents => 0);
+      Unused : Interfaces.C.int;
+   begin
+      if Fd < 0 then
+         --  Nothing to poll: honour the timeout as a plain sleep, so a
+         --  caller with an unarmed wake cell still paces itself.
+         delay Duration (Timeout_Ms) / 1_000.0;
+      else
+         Unused := C_Poll (P'Access, 1, Interfaces.C.int (Timeout_Ms));
+      end if;
+   end Wait;
+
 end Nuntius.Fd_Poll;

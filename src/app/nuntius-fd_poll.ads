@@ -9,4 +9,11 @@ package Nuntius.Fd_Poll is
 
    function Readable (Fd : Integer) return Boolean;
 
+   --  Block until Fd is readable or Timeout_Ms elapses, whichever is
+   --  first.  Does NOT read the fd -- the caller drains.  A negative Fd
+   --  (the unarmed wake-cell value) degrades to a plain sleep of
+   --  Timeout_Ms, so callers need no guards.  Timeout_Ms = 0 returns at
+   --  once (Readable without the answer).
+   procedure Wait (Fd : Integer; Timeout_Ms : Natural);
+
 end Nuntius.Fd_Poll;
