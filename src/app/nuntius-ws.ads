@@ -35,4 +35,32 @@ package Nuntius.Ws is
 
    procedure Close (Self : in out Transport) is abstract;
 
+   ---------------------------------------------------------------------
+   --  What the adapter absorbed
+   ---------------------------------------------------------------------
+
+   --  Inbound frames lost on the CURRENT connection, by reason.
+   --
+   --  Neither number can reach a consumer through Receive, which is the
+   --  whole reason for asking separately.  A ring that overflowed KEPT
+   --  streaming -- a transient burst must not cost a redial, which
+   --  would lose the whole backlog and add a gap -- so the loss never
+   --  ends a Receive call and the feed simply looks quiet.  An
+   --  oversized frame is discarded BEFORE any Receive could see it, so
+   --  a consumer measuring frame sizes for itself cannot see the frame
+   --  that mattered: its high-water reads low at exactly the moment the
+   --  bound is the problem, and the only symptom is a reconnect loop
+   --  with no stated cause.
+   --
+   --  Kept apart because they call for opposite fixes -- drain faster
+   --  or go deeper for one, raise the bound for the other -- and
+   --  Largest is what says how far to raise it.
+   type Loss_Report is record
+      Dropped   : Natural := 0;  --  ring full; connection kept
+      Oversized : Natural := 0;  --  past the bound; connection died
+      Largest   : Natural := 0;  --  the longest oversized frame's length
+   end record;
+
+   function Losses (Self : Transport) return Loss_Report is abstract;
+
 end Nuntius.Ws;

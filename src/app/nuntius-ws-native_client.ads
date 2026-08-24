@@ -62,6 +62,9 @@ is
    overriding
    procedure Close (Self : in out Client);
 
+   overriding
+   function Losses (Self : Client) return Nuntius.Ws.Loss_Report;
+
 private
 
    package Frames is new
@@ -106,6 +109,14 @@ private
       Assembly : String (1 .. Max_Frame_Bytes) := [others => ' '];
       Asm_Len  : Frame_Length := 0;
       Dead     : Boolean := False;
+
+      --  Frames refused for LENGTH before they ever reached the ring:
+      --  the read machine kills the connection on an oversized header
+      --  or an overlong reassembly, so the fifo never sees them and
+      --  cannot tally them.  Saturating, like the fifo's own.
+      Over_N   : Natural := 0;
+      Over_Max : Natural := 0;
+
       Pending  : Command := None;
       Pong     : String (1 .. 125) := [others => ' '];
       Pong_Len : Control_Length := 0;

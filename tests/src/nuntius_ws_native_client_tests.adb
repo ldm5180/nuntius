@@ -40,6 +40,36 @@ package body Nuntius_Ws_Native_Client_Tests is
         Idle_Limit      => 2.0,
         Poll_Slice      => 0.25);
 
+   --  A burst into a ring FAR too shallow for it: Drain decodes every
+   --  frame already buffered, so all Flood_Count land on a ring holding
+   --  four and the rest are refused -- with the connection KEPT, which
+   --  is the right reaction and exactly why the loss has to be counted.
+   --  Nothing else about it is observable.
+   --
+   --  The bound is roomy on purpose.  The read accumulator is
+   --  Max_Frame_Bytes + a header, and the whole burst has to FIT it in
+   --  one go for the drop to be deterministic: at a tight bound only a
+   --  couple of frames are decodable per Drain and a shallow ring is
+   --  never actually overrun.
+   Flood_Count : constant := 40;
+
+   package Flood_Ws is new
+     Nuntius.Ws.Native_Client
+       (Ring_Depth      => 4,
+        Max_Frame_Bytes => 256,
+        Idle_Limit      => 2.0,
+        Poll_Slice      => 0.25);
+
+   --  One text frame whose payload is past this instance's bound.
+   Over_Bytes : constant := 100;
+
+   package Over_Ws is new
+     Nuntius.Ws.Native_Client
+       (Ring_Depth      => 4,
+        Max_Frame_Bytes => 32,
+        Idle_Limit      => 2.0,
+        Poll_Slice      => 0.25);
+
    ------------------------------------------------------------------
    --  Offline cases
    ------------------------------------------------------------------
@@ -458,6 +488,250 @@ package body Nuntius_Ws_Native_Client_Tests is
       Ws.Close (C);
    end Test_Slow_Handshake;
 
+   --  Burst_Server's shape at Flood_Count, so the whole burst lands in
+   --  the handshake read's surplus and one Drain sees all of it.
+   task type Flood_Server is
+      entry Serve (Listener : Socket_Type);
+   end Flood_Server;
+
+   task body Flood_Server is
+      Listen : Socket_Type;
+      Peer   : Socket_Type;
+      From   : Sock_Addr_Type;
+   begin
+      accept Serve (Listener : Socket_Type) do
+         Listen := Listener;
+      end Serve;
+      Accept_Socket (Listen, Peer, From);
+
+      declare
+         Buf  : Stream_Element_Array (1 .. 1_024);
+         Last : Stream_Element_Offset;
+         Seen : Natural := 0;
+      begin
+         loop
+            Receive_Socket (Peer, Buf, Last);
+            exit when Last < Buf'First;
+            Seen := Seen + Natural (Last);
+            exit when Seen >= 4;
+         end loop;
+      end;
+
+      declare
+         Head : constant Stream_Element_Array :=
+           [Character'Pos ('H'),
+            Character'Pos ('T'),
+            Character'Pos ('T'),
+            Character'Pos ('P'),
+            Character'Pos ('/'),
+            Character'Pos ('1'),
+            Character'Pos ('.'),
+            Character'Pos ('1'),
+            Character'Pos (' '),
+            Character'Pos ('1'),
+            Character'Pos ('0'),
+            Character'Pos ('1'),
+            13,
+            10,
+            13,
+            10];
+         Blob :
+           Stream_Element_Array
+             (1 .. Head'Length + Stream_Element_Offset (Flood_Count * 3));
+      begin
+         Blob (1 .. Head'Length) := Head;
+         for I in 0 .. Flood_Count - 1 loop
+            Blob (Head'Length + Stream_Element_Offset (I * 3 + 1)) := 16#81#;
+            Blob (Head'Length + Stream_Element_Offset (I * 3 + 2)) := 16#01#;
+            Blob (Head'Length + Stream_Element_Offset (I * 3 + 3)) :=
+              Stream_Element (I);
+         end loop;
+         Send_Bytes (Peer, Blob);
+      end;
+
+      Close_Socket (Peer);
+      Close_Socket (Listen);
+   exception
+      when others =>
+         Close_Socket (Peer);
+   end Flood_Server;
+
+   --  Serves the upgrade and then ONE text frame too big for the
+   --  client's bound.  Payload under 126 bytes, so the length rides the
+   --  second byte directly and no extended-length field is involved --
+   --  the bound is what is under test, not the header codec.
+   task type Big_Server is
+      entry Serve (Listener : Socket_Type);
+   end Big_Server;
+
+   task body Big_Server is
+      Listen : Socket_Type;
+      Peer   : Socket_Type;
+      From   : Sock_Addr_Type;
+   begin
+      accept Serve (Listener : Socket_Type) do
+         Listen := Listener;
+      end Serve;
+      Accept_Socket (Listen, Peer, From);
+
+      declare
+         Buf  : Stream_Element_Array (1 .. 1_024);
+         Last : Stream_Element_Offset;
+         Seen : Natural := 0;
+      begin
+         loop
+            Receive_Socket (Peer, Buf, Last);
+            exit when Last < Buf'First;
+            Seen := Seen + Natural (Last);
+            exit when Seen >= 4;
+         end loop;
+      end;
+
+      declare
+         Head : constant Stream_Element_Array :=
+           [Character'Pos ('H'),
+            Character'Pos ('T'),
+            Character'Pos ('T'),
+            Character'Pos ('P'),
+            Character'Pos ('/'),
+            Character'Pos ('1'),
+            Character'Pos ('.'),
+            Character'Pos ('1'),
+            Character'Pos (' '),
+            Character'Pos ('1'),
+            Character'Pos ('0'),
+            Character'Pos ('1'),
+            13,
+            10,
+            13,
+            10];
+         Blob :
+           Stream_Element_Array
+             (1 .. Head'Length + 2 + Stream_Element_Offset (Over_Bytes));
+      begin
+         Blob (1 .. Head'Length) := Head;
+         Blob (Head'Length + 1) := 16#81#;               --  FIN | text
+         Blob (Head'Length + 2) := Stream_Element (Over_Bytes);
+         for K in 1 .. Stream_Element_Offset (Over_Bytes) loop
+            Blob (Head'Length + 2 + K) := Character'Pos ('x');
+         end loop;
+         Send_Bytes (Peer, Blob);
+      end;
+
+      Close_Socket (Peer);
+      Close_Socket (Listen);
+   exception
+      when others =>
+         Close_Socket (Peer);
+   end Big_Server;
+
+   --  AN OVERSIZED FRAME KILLS THE CONNECTION AND MUST SAY SO.
+   --
+   --  It is discarded before any Receive could see it, so a consumer
+   --  measuring frame sizes for itself -- which is the whole point of a
+   --  provisional Max_Frame_Bytes -- can never see the frame that
+   --  mattered.  Its high-water reads LOW at exactly the moment the
+   --  bound is the problem, and the only symptom is a reconnect loop
+   --  with no stated reason.  So the adapter reports the count AND the
+   --  length, because the length is the number the bound has to be
+   --  raised past.
+   procedure Test_Oversized_Is_Reported
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Listen : Socket_Type;
+      Srv    : Big_Server;
+      C      : Over_Ws.Client;
+      Buf    : String (1 .. 256);
+      Last   : Natural;
+      Ok     : Boolean;
+      Port   : Port_Type;
+   begin
+      Create_Socket (Listen);
+      Set_Socket_Option (Listen, Socket_Level, (Reuse_Address, True));
+      Bind_Socket (Listen, (Family_Inet, Loopback_Inet_Addr, 0));
+      Listen_Socket (Listen);
+      Port := Get_Socket_Name (Listen).Port;
+
+      Srv.Serve (Listen);
+
+      Over_Ws.Connect
+        (C,
+         "ws://127.0.0.1:" & Trim (Port_Type'Image (Port), Both) & "/o",
+         Ok);
+      Assert (Ok, "oversize: handshake completes");
+
+      Over_Ws.Receive (C, Buf, Last, Ok);
+      Assert (not Ok, "an oversized frame is reconnect-worthy");
+
+      Assert
+        (Over_Ws.Losses (C).Oversized = 1,
+         "and it is COUNTED -- otherwise the death is indistinguishable"
+         & " from any other dropped connection; got"
+         & Over_Ws.Losses (C).Oversized'Image);
+      Assert
+        (Over_Ws.Losses (C).Largest = Over_Bytes,
+         "with the length the bound has to be raised past; wanted"
+         & Natural'Image (Over_Bytes)
+         & ", got"
+         & Over_Ws.Losses (C).Largest'Image);
+
+      Over_Ws.Close (C);
+   end Test_Oversized_Is_Reported;
+
+   --  A FULL RING DROPS FRAMES AND KEEPS STREAMING, WHICH IS WORSE TO
+   --  DIAGNOSE THAN A RECONNECT.
+   --
+   --  Keeping the connection is right: a transient burst must not cost
+   --  a redial, which would lose the whole backlog and add a gap.  But
+   --  Push's Ok is the only signal the refusal gives, and a consumer
+   --  never sees it -- so without a tally the data is simply missing
+   --  and the feed looks quiet.
+   procedure Test_Ring_Overflow_Is_Reported
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Listen : Socket_Type;
+      Srv    : Flood_Server;
+      C      : Flood_Ws.Client;
+      Buf    : String (1 .. 32);
+      Last   : Natural;
+      Ok     : Boolean;
+      Port   : Port_Type;
+   begin
+      Create_Socket (Listen);
+      Set_Socket_Option (Listen, Socket_Level, (Reuse_Address, True));
+      Bind_Socket (Listen, (Family_Inet, Loopback_Inet_Addr, 0));
+      Listen_Socket (Listen);
+      Port := Get_Socket_Name (Listen).Port;
+
+      Srv.Serve (Listen);
+
+      Flood_Ws.Connect
+        (C,
+         "ws://127.0.0.1:" & Trim (Port_Type'Image (Port), Both) & "/f",
+         Ok);
+      Assert (Ok, "flood: handshake completes");
+
+      --  One pop is enough: the whole burst arrived in a single recv and
+      --  one Drain decoded all of it, so the refusals have already
+      --  happened.
+      Flood_Ws.Receive (C, Buf, Last, Ok);
+      Assert (Ok, "the frames that DID fit are still delivered");
+
+      Assert
+        (Flood_Ws.Losses (C).Dropped > 0,
+         "and the ones the ring could not hold are counted rather than"
+         & " vanishing; got"
+         & Flood_Ws.Losses (C).Dropped'Image);
+      Assert
+        (Flood_Ws.Losses (C).Oversized = 0,
+         "a full ring is not an oversized frame -- they call for"
+         & " opposite fixes and must not share a counter");
+
+      Flood_Ws.Close (C);
+   end Test_Ring_Overflow_Is_Reported;
+
    overriding
    procedure Register_Tests (T : in out Test) is
    begin
@@ -473,6 +747,14 @@ package body Nuntius_Ws_Native_Client_Tests is
         (T,
          Test_Burst'Access,
          "burst of many frames in one read: none dropped, in order");
+      Register_Routine
+        (T,
+         Test_Oversized_Is_Reported'Access,
+         "an oversized frame is counted, with its length");
+      Register_Routine
+        (T,
+         Test_Ring_Overflow_Is_Reported'Access,
+         "frames the ring could not hold are counted");
       Register_Routine
         (T,
          Test_Slow_Handshake'Access,

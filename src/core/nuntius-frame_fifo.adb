@@ -2,16 +2,35 @@ package body Nuntius.Frame_Fifo
   with SPARK_Mode
 is
 
+   --  Saturating: a diagnostic must never take the connection down.
+   procedure Bump (N : in out Natural) is
+   begin
+      if N < Natural'Last then
+         N := N + 1;
+      end if;
+   end Bump;
+
    procedure Clear (Self : in out Fifo) is
    begin
       Self.Head := 1;
       Self.Tail := 1;
       Self.Used := 0;
+      Self.No_Room := 0;
+      Self.Too_Long := 0;
+      Self.Longest := 0;
    end Clear;
 
    procedure Push (Self : in out Fifo; Frame : String; Ok : out Boolean) is
    begin
-      if Self.Used = Depth or else Frame'Length > Max_Frame_Bytes then
+      if Self.Used = Depth then
+         Bump (Self.No_Room);
+         Ok := False;
+         return;
+      end if;
+
+      if Frame'Length > Max_Frame_Bytes then
+         Bump (Self.Too_Long);
+         Self.Longest := Natural'Max (Self.Longest, Frame'Length);
          Ok := False;
          return;
       end if;

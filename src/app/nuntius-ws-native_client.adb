@@ -29,6 +29,16 @@ package body Nuntius.Ws.Native_Client is
    -- Execute --
    -------------
 
+   --  Saturating, like the fifo's own tally: a diagnostic must never
+   --  take the connection down.
+   procedure Note_Oversized (Ctx : in out Context; Length : Natural) is
+   begin
+      if Ctx.Over_N < Natural'Last then
+         Ctx.Over_N := Ctx.Over_N + 1;
+      end if;
+      Ctx.Over_Max := Natural'Max (Ctx.Over_Max, Length);
+   end Note_Oversized;
+
    procedure Execute (A : Action_Kind; Ctx : in out Context; Evt : Event) is
       pragma Unreferenced (Evt);
       Ok : Boolean;
@@ -113,6 +123,8 @@ package body Nuntius.Ws.Native_Client is
    procedure Reset (Ctx : in out Context) is
    begin
       Frames.Clear (Ctx.Inbound);
+      Ctx.Over_N := 0;
+      Ctx.Over_Max := 0;
       Ctx.In_Len := 0;
       Ctx.Asm_Len := 0;
       Ctx.Dead := False;
@@ -196,6 +208,7 @@ package body Nuntius.Ws.Native_Client is
 
          when Op_Continuation =>
             if Self.Ctx.Asm_Len > Max_Frame_Bytes - Self.Ctx.In_Len then
+               Note_Oversized (Self.Ctx, Self.Ctx.Asm_Len + Self.Ctx.In_Len);
                Post (Self, E_Oversized);
             else
                Post (Self, (if H.Fin then E_End else E_Cont));
@@ -252,6 +265,7 @@ package body Nuntius.Ws.Native_Client is
 
                when Ready     =>
                   if H.Payload_Bytes > Max_Frame_Bytes then
+                     Note_Oversized (Self.Ctx, H.Payload_Bytes);
                      Post (Self, E_Oversized);
                      exit;
                   elsif Self.Accum_Len < H.Header_Bytes + H.Payload_Bytes then
@@ -696,5 +710,28 @@ package body Nuntius.Ws.Native_Client is
       Self.Connected := False;
       Teardown (Self);
    end Close;
+
+   ------------
+   -- Losses --
+   ------------
+
+   overriding
+   function Losses (Self : Client) return Nuntius.Ws.Loss_Report is
+      --  Two sources, and both are real.  The fifo tallies what it
+      --  refused once a frame reached it; the read machine kills the
+      --  connection on an oversized header before the frame is ever
+      --  assembled, so those never reach the fifo at all.
+      Long : constant Natural := Frames.Refused_Long (Self.Ctx.Inbound);
+   begin
+      return
+        (Dropped   => Frames.Refused_Full (Self.Ctx.Inbound),
+         Oversized =>
+           (if Self.Ctx.Over_N > Natural'Last - Long
+            then Natural'Last
+            else Self.Ctx.Over_N + Long),
+         Largest   =>
+           Natural'Max
+             (Self.Ctx.Over_Max, Frames.Longest_Refused (Self.Ctx.Inbound)));
+   end Losses;
 
 end Nuntius.Ws.Native_Client;

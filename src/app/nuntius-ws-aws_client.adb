@@ -36,21 +36,22 @@ package body Nuntius.Ws.Aws_Client is
    procedure On_Message (Socket : in out Socket_Type; Message : String) is
       Ok : Boolean;
    begin
-      if Message'Length > Max_Frame_Bytes then
-         --  Oversized frame: the port contract makes this reconnect-
-         --  worthy (a frame we could never deliver whole).
-         Socket.Dead := True;
-         return;
-      end if;
-
-      --  A full ring returns Ok False and drops the newest frame while
-      --  KEEPING the connection: the consumer fell behind on a burst, and
-      --  a transient burst must not trigger a reconnect (which would lose
-      --  the whole backlog and add a gap).  With the ring at Ring_Depth
-      --  this is rare; a sustained overrun degrades to dropped frames,
-      --  not a reconnect storm.  Nothing to do on the drop, so Ok is
-      --  deliberately not acted on.
+      --  EVERY message goes through Push, refusals included, so the
+      --  fifo's own tally is the one place either loss is counted --
+      --  and Nuntius.Ws.Losses is how a consumer reads it back.  Push
+      --  refuses an overlong frame without copying it, so routing the
+      --  oversized case through here costs nothing.
       Frames.Push (Socket.Inbound, Message, Ok);
+
+      --  The two refusals are not the same event.  An oversized frame is
+      --  a BOUND that is wrong: it could never be delivered whole, so
+      --  the port contract makes it reconnect-worthy.  A full ring is
+      --  the consumer falling behind on a burst, and that must NOT
+      --  reconnect -- a redial would lose the whole backlog and add a
+      --  gap where a moment's patience loses nothing.
+      if Message'Length > Max_Frame_Bytes then
+         Socket.Dead := True;
+      end if;
    end On_Message;
 
    overriding
@@ -177,5 +178,24 @@ package body Nuntius.Ws.Aws_Client is
          end;
       end if;
    end Close;
+
+   ------------
+   -- Losses --
+   ------------
+
+   --  Straight off the fifo: On_Message routes every refusal through
+   --  Push, so there is no second tally to reconcile.  An unconnected
+   --  client has no socket and has therefore lost nothing.
+   overriding
+   function Losses (Self : Client) return Nuntius.Ws.Loss_Report is
+   begin
+      if Self.Sock = null then
+         return (others => <>);
+      end if;
+      return
+        (Dropped   => Frames.Refused_Full (Self.Sock.Inbound),
+         Oversized => Frames.Refused_Long (Self.Sock.Inbound),
+         Largest   => Frames.Longest_Refused (Self.Sock.Inbound));
+   end Losses;
 
 end Nuntius.Ws.Aws_Client;

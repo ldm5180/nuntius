@@ -61,6 +61,9 @@ is
    overriding
    procedure Close (Self : in out Client);
 
+   overriding
+   function Losses (Self : Client) return Nuntius.Ws.Loss_Report;
+
 private
 
    --  An oversized inbound frame marks the connection dead
