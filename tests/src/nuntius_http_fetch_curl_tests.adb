@@ -1,11 +1,14 @@
 with Ada.Real_Time;
+with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
 
 with AUnit.Assertions; use AUnit.Assertions;
 
+with GNAT.Sockets;
 with Interfaces.C;
 with System;
 
+with Loopback_Capture;
 with Nuntius.Http.Fetch.Curl;
 
 --  Offline behavior of the ASYNC (curl-multi) adapter: Start never
@@ -68,6 +71,57 @@ package body Nuntius_Http_Fetch_Curl_Tests is
          delay 0.001;
       end loop;
    end Pump_Until;
+
+   function Has (Haystack, Needle : String) return Boolean
+   is (Ada.Strings.Fixed.Index (Haystack, Needle) > 0);
+
+   --  The registered identity is what the async adapter puts on the
+   --  wire too -- observed at a loopback peer, since libcurl sends no
+   --  User-Agent unless told to.
+   procedure Test_User_Agent_On_The_Wire
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Old    : constant String := Nuntius.Http.User_Agent;
+      Listen : GNAT.Sockets.Socket_Type;
+      Port   : Natural;
+      C      : Curl.Curl_Client;
+      Id     : Request_Id;
+      Done   : Completion;
+      Got    : Boolean := False;
+   begin
+      Nuntius.Http.Set_User_Agent ("probe/1.2");
+      Loopback_Capture.Listen_Loopback (Listen, Port);
+      declare
+         Srv : Loopback_Capture.Server;
+      begin
+         Srv.Serve (Listen);
+         C.Start
+           ((Verb          => Get,
+             URL           =>
+               To_Unbounded_String
+                 (Loopback_Capture.Loopback_URL (Port, "/ua")),
+             Content       => Null_Unbounded_String,
+             Content_Type  => Null_Unbounded_String,
+             Authorization => To_Unbounded_String ("Bearer x"),
+             Timeout_Ms    => 2_000),
+            Id);
+         for K in 1 .. 50 loop
+            C.Pump (Done, Got);
+            exit when Got;
+            C.Wait (200, No_Extra_Fds);
+         end loop;
+      end;
+      Nuntius.Http.Set_User_Agent (Old);
+
+      Assert (Id /= No_Request, "the transfer started");
+      Assert
+        (Got and then Done.Ok and then Done.Status = 200,
+         "the loopback peer answered 200");
+      Assert
+        (Has (Loopback_Capture.Head, "User-Agent: probe/1.2"),
+         "the registered identity is on the wire: " & Loopback_Capture.Head);
+   end Test_User_Agent_On_The_Wire;
 
    --  A fresh client has nothing to say and says so at once.
    procedure Test_Empty_Pump (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -266,6 +320,10 @@ package body Nuntius_Http_Fetch_Curl_Tests is
         (T,
          Test_Wait_Drives_A_Transfer'Access,
          "the pump/wait cycle surfaces a refused connect promptly");
+      Register_Routine
+        (T,
+         Test_User_Agent_On_The_Wire'Access,
+         "a registered User-Agent reaches the peer on every transfer");
    end Register_Tests;
 
    overriding

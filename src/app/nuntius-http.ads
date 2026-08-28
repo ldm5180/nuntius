@@ -16,6 +16,19 @@ with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
 
 package Nuntius.Http is
 
+   --  The User-Agent every adapter puts on every request.  libcurl --
+   --  unlike the curl CLI -- sends none unless told to, and some API
+   --  edges (Tastytrade's production nginx, for one) refuse a request
+   --  without one with an HTML 401 before the application ever sees
+   --  it, so a missing header looks exactly like a dead credential.
+   --  The default names this crate; a composition root registers its
+   --  program's identity once, before any task activates, because this
+   --  is plain package state read by every adapter at request time.
+   function User_Agent return String;
+
+   procedure Set_User_Agent (Value : String)
+   with Pre => Value'Length > 0, Post => User_Agent = Value;
+
    type Transport is limited interface;
 
    --  Ok False means a transport-level failure (connect/TLS/timeout);
