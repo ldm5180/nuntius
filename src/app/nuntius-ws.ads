@@ -33,6 +33,26 @@ package Nuntius.Ws is
       Ok   : out Boolean)
    is abstract;
 
+   --  Block for the next inbound text frame for at most Patience
+   --  seconds.  Timed_Out True (with Ok True and Last = 0) means the
+   --  wait elapsed with the connection still healthy -- deliberately
+   --  NOT reconnect-worthy: a quiet stream is the caller's business,
+   --  and this is the primitive a keepalive scheduler needs (a consumer
+   --  that must SEND on a schedule cannot sit in Receive forever, and a
+   --  quiet stream would park it there past the idle limit).
+   --  Everything Ok False meant on Receive it still means here, and the
+   --  idle limit keeps its authority: the idle clock accumulates ACROSS
+   --  calls in the adapter, so total silence past the limit is still
+   --  reported dead however patient each individual call was.
+   procedure Receive_For
+     (Self      : in out Transport;
+      Into      : out String;
+      Last      : out Natural;
+      Patience  : Duration;
+      Ok        : out Boolean;
+      Timed_Out : out Boolean)
+   is abstract;
+
    procedure Close (Self : in out Transport) is abstract;
 
    ---------------------------------------------------------------------

@@ -144,6 +144,7 @@ package body Nuntius.Ws.Aws_Client is
       Self.Sock := new Socket_Type;
       AWS.Net.WebSocket.Connect (Self.Sock.all, URL);
       Self.Connected := True;
+      Self.Idle := 0.0;
       Ok := True;
    exception
       when E : others =>
@@ -174,56 +175,105 @@ package body Nuntius.Ws.Aws_Client is
          Ok := False;
    end Send_Text;
 
-   overriding
-   procedure Receive
-     (Self : in out Client;
-      Into : out String;
-      Last : out Natural;
-      Ok   : out Boolean) is
+   --  The one wait loop under both receives.  Bounded False waits until
+   --  a frame, death, or the idle limit; Bounded True additionally
+   --  returns a healthy Timed_Out once Patience has elapsed.  The idle
+   --  clock is Self.Idle -- persisted across calls, reset by traffic --
+   --  so a run of patient calls still detects a silent partition.
+   procedure Wait_Frame
+     (Self      : in out Client;
+      Into      : out String;
+      Last      : out Natural;
+      Bounded   : Boolean;
+      Patience  : Duration;
+      Ok        : out Boolean;
+      Timed_Out : out Boolean)
+   is
+      Waited : Duration := 0.0;
    begin
       Last := 0;
       Ok := False;
+      Timed_Out := False;
 
       if Self.Sock = null then
          return;  --  no dial in flight; nothing to receive
 
       end if;
 
-      declare
-         Idle : Duration := 0.0;
-      begin
-         loop
-            if Frames.Count (Self.Sock.Inbound) > 0 then
-               --  Ok stays False for a frame too big for this caller:
-               --  consumed by Pop and reconnect-worthy here.
-               Frames.Pop (Self.Sock.Inbound, Into, Last, Ok);
-               return;
-            end if;
+      loop
+         if Frames.Count (Self.Sock.Inbound) > 0 then
+            --  Ok stays False for a frame too big for this caller:
+            --  consumed by Pop and reconnect-worthy here.
+            Frames.Pop (Self.Sock.Inbound, Into, Last, Ok);
+            Self.Idle := 0.0;
+            return;
+         end if;
 
-            if not Self.Connected or else Self.Sock.Dead then
-               return;
-            end if;
+         if not Self.Connected or else Self.Sock.Dead then
+            return;
+         end if;
 
-            if Idle >= Idle_Limit then
-               --  Nothing at all -- no data, no control traffic -- for
-               --  the whole limit: assume a silent partition.
+         if Self.Idle >= Idle_Limit then
+            --  Nothing at all -- no data, no control traffic -- for
+            --  the whole limit: assume a silent partition.
+            Self.Sock.Dead := True;
+            return;
+         end if;
+
+         if Bounded and then Waited >= Patience then
+            Ok := True;
+            Timed_Out := True;
+            return;
+         end if;
+
+         --  Pump the socket; a False result is just "nothing yet".
+         declare
+            Got : Boolean := False;
+         begin
+            Got := AWS.Net.WebSocket.Poll (Self.Sock.all, Poll_Slice);
+            if Got then
+               Self.Idle := 0.0;
+            else
+               Self.Idle := Self.Idle + Poll_Slice;
+               Waited := Waited + Poll_Slice;
+            end if;
+         exception
+            when others =>
                Self.Sock.Dead := True;
-               return;
-            end if;
+         end;
+      end loop;
+   end Wait_Frame;
 
-            --  Pump the socket; a False result is just "nothing yet".
-            declare
-               Got : Boolean := False;
-            begin
-               Got := AWS.Net.WebSocket.Poll (Self.Sock.all, Poll_Slice);
-               Idle := (if Got then 0.0 else Idle + Poll_Slice);
-            exception
-               when others =>
-                  Self.Sock.Dead := True;
-            end;
-         end loop;
-      end;
+   overriding
+   procedure Receive
+     (Self : in out Client;
+      Into : out String;
+      Last : out Natural;
+      Ok   : out Boolean)
+   is
+      Unused : Boolean;
+   begin
+      Wait_Frame
+        (Self,
+         Into,
+         Last,
+         Bounded   => False,
+         Patience  => 0.0,
+         Ok        => Ok,
+         Timed_Out => Unused);
    end Receive;
+
+   overriding
+   procedure Receive_For
+     (Self      : in out Client;
+      Into      : out String;
+      Last      : out Natural;
+      Patience  : Duration;
+      Ok        : out Boolean;
+      Timed_Out : out Boolean) is
+   begin
+      Wait_Frame (Self, Into, Last, True, Patience, Ok, Timed_Out);
+   end Receive_For;
 
    overriding
    procedure Close (Self : in out Client) is
