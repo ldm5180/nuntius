@@ -1,10 +1,11 @@
---  The serving side's pure primitives: the HTTP/1.1 request-LINE
---  parser and the response head -- bounded string functions with no IO,
---  so a consumer's socket loop (Nuntius.Web.Server) stays a thin
---  transport.  Headers are never interpreted: the server reads them
---  only to find the blank line ending the request.  ROUTING is absent
---  by design -- which targets exist is the consumer's policy, applied
---  in its Handle procedure.
+--  The serving side's pure primitives: the HTTP/1.1 request parser and
+--  the response head -- bounded string functions with no IO, so a
+--  consumer's socket loop (Nuntius.Web.Server) stays a thin transport.
+--  The parser reads the request LINE and the handful of header lines a
+--  serving loop has to act on (how long the body is, what it claims to
+--  be, who is asking); everything else in the header block is skipped.
+--  ROUTING is absent by design -- which targets exist is the consumer's
+--  policy, applied in its Handle procedure.
 
 package Nuntius.Web
   with SPARK_Mode
@@ -19,40 +20,115 @@ is
    --  generous: a target past the cap answers 400 BEFORE the consumer's
    --  Handle runs, so an authorization code would be lost silently.
    Max_Target        : constant := 2_048;
+   --  A request body's cap, read past the head only for a POST.
+   Max_Body_Bytes    : constant := 4_096;
+   --  openssl rand -hex 32 is 64; twice that is room, not a target.
+   Max_Bearer        : constant := 128;
+   --  One IPv6 and one IPv4 hop with the comma fit; the value is a
+   --  log decoration, never a decision.
+   Max_Forwarded     : constant := 64;
 
-   type Method_Kind is (Get, Other);
+   type Method_Kind is (Get, Post, Other);
 
    type Request is record
       Well_Formed : Boolean := False;
       Method      : Method_Kind := Other;
       Target      : String (1 .. Max_Target) := [others => ' '];
       Target_Len  : Natural range 0 .. Max_Target := 0;
+
+      --  From the header block, when present and sane.
+      --  Content-Length: 0 when absent.  A digit run whose value
+      --  exceeds Max_Body_Bytes -- including any run longer than four
+      --  digits -- leaves the request NOT well-formed with
+      --  Length_Refused True, so the server can answer 413 rather than
+      --  400; a run that is not all digits, an empty value, or a
+      --  second Content-Length is plain 400 (Well_Formed False,
+      --  Length_Refused False).  A run longer than four digits is
+      --  refused on its LENGTH alone and never evaluated, so nothing
+      --  here can overflow.
+      Content_Length : Natural range 0 .. Max_Body_Bytes := 0;
+      Length_Refused : Boolean := False;
+      --  Content-Type names application/json (the value up to the
+      --  first ';', trimmed, ASCII case-insensitive).
+      Json_Body      : Boolean := False;
+      --  Authorization: Bearer <token> (RFC 6750 2.1): the scheme word
+      --  ASCII case-insensitive, one or more SP, then the token
+      --  verbatim to the end of the value.  Absent, another scheme, an
+      --  empty token, or one over Max_Bearer bytes leaves Bearer_Len 0
+      --  -- an over-long token can never match and never overflows.
+      --  A SECRET: never logged, never echoed, never 'Image'd.
+      Bearer         : String (1 .. Max_Bearer) := [others => ' '];
+      Bearer_Len     : Natural range 0 .. Max_Bearer := 0;
+      --  X-Forwarded-For, for the audit line only: the value verbatim
+      --  when it is 1 .. Max_Forwarded bytes of visible ASCII (32 ..
+      --  126); anything longer or with any other byte leaves it empty,
+      --  so attacker-chosen text cannot carry a control character into
+      --  the log.
+      Forwarded_For  : String (1 .. Max_Forwarded) := [others => ' '];
+      Forwarded_Len  : Natural range 0 .. Max_Forwarded := 0;
    end record;
 
    function Target_Of (R : Request) return String
    is (R.Target (1 .. R.Target_Len));
 
-   --  Parse the request LINE (up to the first CRLF; anything after is
-   --  ignored).  Well_Formed = "<METHOD> SP <target> SP HTTP/1.<x>"
-   --  with an uppercase method, a target of 1 .. Max_Target bytes with
-   --  no interior SP/CTL, and a one-digit minor version.  An unknown
-   --  method is WELL-FORMED with Method = Other -- the server answers
-   --  405, not 400.
+   function Bearer_Of (R : Request) return String
+   is (R.Bearer (1 .. R.Bearer_Len));
+
+   function Forwarded_For_Of (R : Request) return String
+   is (R.Forwarded_For (1 .. R.Forwarded_Len));
+
+   --  Parse the request LINE and the header block up to the first EMPTY
+   --  line (never to Text'Last: a body may itself contain CRLF and even
+   --  a Content-Length).  Well_Formed = "<METHOD> SP <target> SP
+   --  HTTP/1.<x>" with an uppercase method, a target of 1 .. Max_Target
+   --  bytes with no interior SP/CTL, and a one-digit minor version --
+   --  and no refused header.  An unknown method is WELL-FORMED with
+   --  Method = Other -- the server answers 405, not 400.
    function Parse_Request (Text : String) return Request
    with Pre => Text'First = 1 and then Text'Length <= Max_Request_Bytes;
 
-   type Status is (Ok_200, Bad_Request_400, Not_Found_404, Not_Allowed_405);
+   --  Equality without an early exit: every byte is visited whatever
+   --  the first difference.  The consumer compares two SHA-256 hex
+   --  digests with it (a bearer guard), so the Pre is exact length.
+   function Same_Text (A, B : String) return Boolean
+   with Pre => A'Length = B'Length, Post => Same_Text'Result = (A = B);
+
+   type Status is
+     (Ok_200,
+      Accepted_202,
+      Bad_Request_400,
+      Unauthorized_401,
+      Forbidden_403,
+      Not_Found_404,
+      Not_Allowed_405,
+      Conflict_409,
+      Too_Large_413,
+      Unsupported_Media_415);
+
+   --  The one header a 401 MUST carry (RFC 9110 15.5.2); the realm is
+   --  cosmetic and the same for every consumer.
+   Challenge : constant String :=
+     "WWW-Authenticate: Bearer realm=""dashboard""";
 
    function Status_Line (S : Status) return String
    is (case S is
-         when Ok_200          => "200 OK",
-         when Bad_Request_400 => "400 Bad Request",
-         when Not_Found_404   => "404 Not Found",
-         when Not_Allowed_405 => "405 Method Not Allowed");
+         when Ok_200                => "200 OK",
+         when Accepted_202          => "202 Accepted",
+         when Bad_Request_400       => "400 Bad Request",
+         when Unauthorized_401      => "401 Unauthorized",
+         when Forbidden_403         => "403 Forbidden",
+         when Not_Found_404         => "404 Not Found",
+         when Not_Allowed_405       => "405 Method Not Allowed",
+         when Conflict_409          => "409 Conflict",
+         when Too_Large_413         => "413 Content Too Large",
+         when Unsupported_Media_415 => "415 Unsupported Media Type");
 
-   --  "HTTP/1.1 <code> <reason>" CRLF "Connection: close" CRLF
-   --  "Cache-Control: no-store" CRLF "Content-Type: <..>" CRLF
-   --  "Content-Length: <n>" CRLF CRLF -- the body follows verbatim.
+   --  "HTTP/1.1 <code> <reason>" CRLF, then on a 401 ONLY the
+   --  Challenge CRLF, then "Connection: close" CRLF "Cache-Control:
+   --  no-store" CRLF "Content-Security-Policy: frame-ancestors 'none'"
+   --  CRLF "X-Content-Type-Options: nosniff" CRLF "Content-Type: <..>"
+   --  CRLF "Content-Length: <n>" CRLF CRLF -- the body follows
+   --  verbatim.
    function Response_Head
      (S : Status; Content_Type : String; Content_Length : Natural)
       return String
