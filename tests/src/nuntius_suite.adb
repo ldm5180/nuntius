@@ -12,6 +12,7 @@ with Nuntius_Web_Handshake_Tests;
 with Nuntius_Web_Server_Tests;
 with Nuntius_Web_Tests;
 with Nuntius_Ws_Aws_Client_Tests;
+with Nuntius_Ws_Peer_Tests;
 with Nuntius_Ws_Native_Client_Tests;
 
 package body Nuntius_Suite is
@@ -38,6 +39,7 @@ package body Nuntius_Suite is
       Add (new Nuntius_Web_Files_Tests.Test);
       Add (new Nuntius_Web_Handshake_Tests.Test);
       Add (new Nuntius_Web_Server_Tests.Test);
+      Add (new Nuntius_Ws_Peer_Tests.Test);
       return Result;
    end Suite;
 
