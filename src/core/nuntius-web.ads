@@ -27,6 +27,10 @@ is
    --  One IPv6 and one IPv4 hop with the comma fit; the value is a
    --  log decoration, never a decision.
    Max_Forwarded     : constant := 64;
+   --  RFC 6455 4.1: 16 random bytes, base64 -- 24 bytes ending in "==".
+   Ws_Key_Length     : constant := 24;
+   --  base64 (SHA-1 (..)): 20 bytes become 28.
+   Accept_Length     : constant := 28;
 
    type Method_Kind is (Get, Post, Other);
 
@@ -66,6 +70,13 @@ is
       --  the log.
       Forwarded_For  : String (1 .. Max_Forwarded) := [others => ' '];
       Forwarded_Len  : Natural range 0 .. Max_Forwarded := 0;
+      --  A websocket upgrade: a GET whose Upgrade, Connection,
+      --  Sec-WebSocket-Version and Sec-WebSocket-Key headers all agree
+      --  (RFC 6455 4.1).  Anything short of all four leaves this False
+      --  and the request is the plain GET it was -- nothing is refused
+      --  at the parser.  Ws_Key means something only when Upgrade does.
+      Upgrade        : Boolean := False;
+      Ws_Key         : String (1 .. Ws_Key_Length) := [others => ' '];
    end record;
 
    function Target_Of (R : Request) return String
@@ -76,6 +87,13 @@ is
 
    function Forwarded_For_Of (R : Request) return String
    is (R.Forwarded_For (1 .. R.Forwarded_Len));
+
+   function Ws_Key_Of (R : Request) return String
+   is (R.Ws_Key);
+
+   --  The default for a consumer that takes no upgrades.
+   function Never_Upgrade (Unused : Request) return Boolean
+   is (False);
 
    --  Parse the request LINE and the header block up to the first EMPTY
    --  line (never to Text'Last: a body may itself contain CRLF and even
@@ -103,12 +121,17 @@ is
       Not_Allowed_405,
       Conflict_409,
       Too_Large_413,
-      Unsupported_Media_415);
+      Unsupported_Media_415,
+      Upgrade_Required_426,
+      Unavailable_503);
 
    --  The one header a 401 MUST carry (RFC 9110 15.5.2); the realm is
    --  cosmetic and the same for every consumer.
    Challenge : constant String :=
      "WWW-Authenticate: Bearer realm=""dashboard""";
+
+   --  The one header a 426 MUST carry (RFC 9110 15.5.22).
+   Upgrade_Offer : constant String := "Upgrade: websocket";
 
    function Status_Line (S : Status) return String
    is (case S is
@@ -121,10 +144,13 @@ is
          when Not_Allowed_405       => "405 Method Not Allowed",
          when Conflict_409          => "409 Conflict",
          when Too_Large_413         => "413 Content Too Large",
-         when Unsupported_Media_415 => "415 Unsupported Media Type");
+         when Unsupported_Media_415 => "415 Unsupported Media Type",
+         when Upgrade_Required_426  => "426 Upgrade Required",
+         when Unavailable_503       => "503 Service Unavailable");
 
    --  "HTTP/1.1 <code> <reason>" CRLF, then on a 401 ONLY the
-   --  Challenge CRLF, then "Connection: close" CRLF "Cache-Control:
+   --  Challenge CRLF and on a 426 ONLY the Upgrade_Offer CRLF, then
+   --  "Connection: close" CRLF "Cache-Control:
    --  no-store" CRLF "Content-Security-Policy: frame-ancestors 'none'"
    --  CRLF "X-Content-Type-Options: nosniff" CRLF "Content-Type: <..>"
    --  CRLF "Content-Length: <n>" CRLF CRLF -- the body follows
@@ -133,5 +159,13 @@ is
      (S : Status; Content_Type : String; Content_Length : Natural)
       return String
    with Pre => Content_Type'Length in 1 .. 64;
+
+   --  "HTTP/1.1 101 Switching Protocols" CRLF "Upgrade: websocket"
+   --  CRLF "Connection: Upgrade" CRLF "Sec-WebSocket-Accept: <a>" CRLF
+   --  CRLF.  No body follows: the socket is a websocket from here.
+   function Upgrade_Head (Accept_Key : String) return String
+   with
+     Pre  => Accept_Key'Length = Accept_Length,
+     Post => Upgrade_Head'Result'Length = 101 + Accept_Length;
 
 end Nuntius.Web;

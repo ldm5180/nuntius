@@ -29,6 +29,17 @@ is
    function All_Digits (S : String) return Boolean
    is (S'Length > 0 and then (for all C of S => C in '0' .. '9'));
 
+   function Is_Base64_Char (C : Character) return Boolean
+   is (C in 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '+' | '/');
+
+   --  RFC 6455 4.1: 16 bytes base64-encoded is 22 alphabet characters
+   --  and the two pad bytes.  A key of any other shape is not one.
+   function Is_Ws_Key (S : String) return Boolean
+   is (S'Length = Ws_Key_Length
+       and then S (S'Last - 1 .. S'Last) = "=="
+       and then (for all K in S'First .. S'Last - 2 =>
+                   Is_Base64_Char (S (K))));
+
    --  Every string below is a slice of the 4 KB request text (a null
    --  slice's bounds are otherwise unconstrained, which is what the
    --  arithmetic here needs ruled out).
@@ -142,6 +153,13 @@ is
       Bad_Header  : Boolean := False;
       Seen_Length : Boolean := False;
 
+      --  The upgrade's four agreements; R.Upgrade is their conjunction
+      --  with the method, computed once after the walk.
+      Conn_Upgrade : Boolean := False;
+      Wants_Ws     : Boolean := False;
+      Version_13   : Boolean := False;
+      Seen_Key     : Boolean := False;
+
       --  Content-Type, as far as the first ';' (the parameters are a
       --  charset, never the media type).
       function Is_Json (Value : String) return Boolean
@@ -210,6 +228,39 @@ is
          end if;
       end Read_Forwarded;
 
+      --  Connection is a comma-separated token list (RFC 9110 7.6.1):
+      --  browsers send "Upgrade", proxies "keep-alive, Upgrade".
+      procedure Read_Connection (Value : String)
+      with Pre => In_Text_Bounds (Value)
+      is
+         Pos   : Natural := Value'First;
+         Comma : Natural;
+      begin
+         while Pos <= Value'Last loop
+            pragma Loop_Invariant (Pos in Value'First .. Value'Last);
+            pragma Loop_Variant (Increases => Pos);
+            Comma := Index_Of (Value (Pos .. Value'Last), ',');
+            declare
+               Last : constant Natural :=
+                 (if Comma = 0 then Value'Last else Comma - 1);
+            begin
+               if Same_Ci (Trimmed (Value (Pos .. Last)), "Upgrade") then
+                  Conn_Upgrade := True;
+               end if;
+            end;
+            exit when Comma = 0;
+            Pos := Comma + 1;
+         end loop;
+      end Read_Connection;
+
+      procedure Read_Ws_Key (Value : String) is
+      begin
+         if Is_Ws_Key (Value) then
+            Seen_Key := True;
+            R.Ws_Key := Value;
+         end if;
+      end Read_Ws_Key;
+
       --  One header line, name before the first ':'.  A line with no
       --  colon is not a header and is skipped: the head is still a
       --  head, and nothing here decides well-formedness on its own.
@@ -232,6 +283,14 @@ is
                Read_Bearer (Value);
             elsif Same_Ci (Name, "X-Forwarded-For") then
                Read_Forwarded (Value);
+            elsif Same_Ci (Name, "Connection") then
+               Read_Connection (Value);
+            elsif Same_Ci (Name, "Upgrade") then
+               Wants_Ws := Same_Ci (Value, "websocket");
+            elsif Same_Ci (Name, "Sec-WebSocket-Version") then
+               Version_13 := Value = "13";
+            elsif Same_Ci (Name, "Sec-WebSocket-Key") then
+               Read_Ws_Key (Value);
             end if;
          end;
       end Read_Header;
@@ -316,6 +375,12 @@ is
          Read_Headers (Line_Last + 3);
       end if;
       R.Well_Formed := not Bad_Header;
+      R.Upgrade :=
+        R.Method = Get
+        and then Conn_Upgrade
+        and then Wants_Ws
+        and then Version_13
+        and then Seen_Key;
       return R;
    end Parse_Request;
 
@@ -347,6 +412,7 @@ is
        & Status_Line (S)
        & CRLF
        & (if S = Unauthorized_401 then Challenge & CRLF else "")
+       & (if S = Upgrade_Required_426 then Upgrade_Offer & CRLF else "")
        & "Connection: close"
        & CRLF
        & "Cache-Control: no-store"
@@ -360,6 +426,18 @@ is
        & CRLF
        & "Content-Length: "
        & Decimal_Image (Content_Length)
+       & CRLF
+       & CRLF);
+
+   function Upgrade_Head (Accept_Key : String) return String
+   is ("HTTP/1.1 101 Switching Protocols"
+       & CRLF
+       & Upgrade_Offer
+       & CRLF
+       & "Connection: Upgrade"
+       & CRLF
+       & "Sec-WebSocket-Accept: "
+       & Accept_Key
        & CRLF
        & CRLF);
 

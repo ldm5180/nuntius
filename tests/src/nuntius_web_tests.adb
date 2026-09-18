@@ -396,6 +396,175 @@ package body Nuntius_Web_Tests is
          "the exact 401 head, challenge and all");
    end Test_Response_Head_401;
 
+   --  The browser's upgrade (RFC 6455 4.1), as it arrives through the
+   --  proxy: four headers have to agree before the request is one.
+   Key_24 : constant String := "dGhlIHNhbXBsZSBub25jZQ==";
+
+   --  A head from its parts, so one header at a time can go missing.
+   function Head (Conn, Upg, Ver, Key : String) return String
+   is ("GET /api/stream HTTP/1.1"
+       & CRLF
+       & "Host: x"
+       & (if Conn = "" then "" else CRLF & "Connection: " & Conn)
+       & (if Upg = "" then "" else CRLF & "Upgrade: " & Upg)
+       & (if Ver = "" then "" else CRLF & "Sec-WebSocket-Version: " & Ver)
+       & (if Key = "" then "" else CRLF & "Sec-WebSocket-Key: " & Key)
+       & CRLF
+       & CRLF);
+
+   procedure Test_Upgrade_Request_Parsed
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      R : constant Nuntius.Web.Request :=
+        Nuntius.Web.Parse_Request
+          ("GET /api/stream HTTP/1.1"
+           & CRLF
+           & "Host: fructus.tail1234.ts.net"
+           & CRLF
+           & "Connection: Upgrade"
+           & CRLF
+           & "Upgrade: websocket"
+           & CRLF
+           & "Sec-WebSocket-Version: 13"
+           & CRLF
+           & "Sec-WebSocket-Key: "
+           & Key_24
+           & CRLF
+           & "Origin: https://fructus.tail1234.ts.net"
+           & CRLF
+           & CRLF);
+   begin
+      Assert (R.Well_Formed, "the upgrade request is well formed");
+      Assert (R.Method = Nuntius.Web.Get, "the method is Get");
+      Assert (R.Upgrade, "the four headers agree");
+      Assert (Nuntius.Web.Ws_Key_Of (R) = Key_24, "the key survives verbatim");
+   end Test_Upgrade_Request_Parsed;
+
+   procedure Test_Upgrade_Needs_All_Four
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      use Nuntius.Web;
+
+      Posted : constant Request :=
+        Parse_Request
+          ("POST /api/stream HTTP/1.1"
+           & CRLF
+           & "Connection: Upgrade"
+           & CRLF
+           & "Upgrade: websocket"
+           & CRLF
+           & "Sec-WebSocket-Version: 13"
+           & CRLF
+           & "Sec-WebSocket-Key: "
+           & Key_24
+           & CRLF
+           & CRLF);
+   begin
+      Assert
+        (Parse_Request (Head ("Upgrade", "websocket", "13", Key_24)).Upgrade,
+         "all four agreeing is an upgrade");
+      Assert
+        (not Parse_Request (Head ("", "websocket", "13", Key_24)).Upgrade,
+         "no Connection header");
+      Assert
+        (not Parse_Request (Head ("Upgrade", "", "13", Key_24)).Upgrade,
+         "no Upgrade header");
+      Assert
+        (not Parse_Request (Head ("Upgrade", "websocket", "", Key_24)).Upgrade,
+         "no version header");
+      Assert
+        (not Parse_Request (Head ("Upgrade", "websocket", "13", "")).Upgrade,
+         "no key header");
+      Assert
+        (Parse_Request
+           (Head ("keep-alive, Upgrade", "websocket", "13", Key_24))
+           .Upgrade,
+         "Connection is a token list");
+      Assert
+        (Parse_Request (Head ("upgrade", "WebSocket", "13", Key_24)).Upgrade,
+         "both values are case-insensitive");
+      Assert
+        (not Parse_Request (Head ("Upgrade", "websocket", "12", Key_24))
+               .Upgrade,
+         "only version 13");
+      Assert
+        (not Parse_Request
+               (Head ("Upgrade", "websocket", "13", "dGhlIHNhbXBsZSBub25jZQ="))
+               .Upgrade,
+         "a 23-byte key is not a key");
+      Assert (not Posted.Upgrade, "a POST is never an upgrade");
+      Assert
+        (Parse_Request (Head ("", "", "", "")).Well_Formed,
+         "a request with none of them is still a request");
+   end Test_Upgrade_Needs_All_Four;
+
+   procedure Test_Upgrade_Head_Bytes
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Text : constant String :=
+        Nuntius.Web.Upgrade_Head ("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
+   begin
+      Assert
+        (Text
+         = "HTTP/1.1 101 Switching Protocols"
+           & CRLF
+           & "Upgrade: websocket"
+           & CRLF
+           & "Connection: Upgrade"
+           & CRLF
+           & "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+           & CRLF
+           & CRLF,
+         "the exact 101 head, byte for byte");
+      Assert (Text'Length = 129, "129 bytes on the wire");
+   end Test_Upgrade_Head_Bytes;
+
+   procedure Test_Never_Upgrade (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      R : constant Nuntius.Web.Request :=
+        Nuntius.Web.Parse_Request
+          (Head ("Upgrade", "websocket", "13", Key_24));
+   begin
+      Assert (R.Upgrade, "the request is an upgrade");
+      Assert
+        (not Nuntius.Web.Never_Upgrade (R),
+         "the default formal takes no upgrade at all");
+   end Test_Never_Upgrade;
+
+   --  RFC 9110 15.5.22 makes the offer a MUST on a 426, and it is the
+   --  only status besides the 401 that carries a header of its own.
+   procedure Test_426_Head_Carries_Upgrade
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      use Nuntius.Web;
+      Text  : constant String :=
+        Response_Head (Upgrade_Required_426, "text/plain", 14);
+      Lead  : constant String :=
+        "HTTP/1.1 426 Upgrade Required" & CRLF & Upgrade_Offer & CRLF;
+      Plain : constant String := Response_Head (Ok_200, "text/plain", 2);
+   begin
+      Assert
+        (Text'Length > Lead'Length
+         and then Text (Text'First .. Text'First + Lead'Length - 1) = Lead,
+         "the offer comes straight after the status line");
+      Assert
+        (Status_Line (Unavailable_503) = "503 Service Unavailable", "503");
+      Assert
+        (Plain'Length > Lead'Length
+         and then Plain (Plain'First .. Plain'First + 20) /= "HTTP/1.1 426",
+         "a 200 carries no offer");
+      for K in Plain'First .. Plain'Last - Upgrade_Offer'Length + 1 loop
+         Assert
+           (Plain (K .. K + Upgrade_Offer'Length - 1) /= Upgrade_Offer,
+            "no other status offers an upgrade");
+      end loop;
+   end Test_426_Head_Carries_Upgrade;
+
    overriding
    procedure Register_Tests (T : in out Test) is
    begin
@@ -433,6 +602,24 @@ package body Nuntius_Web_Tests is
         (T,
          Test_Response_Head_401'Access,
          "Response_Head puts the challenge on a 401 only");
+      Register_Routine
+        (T,
+         Test_Upgrade_Request_Parsed'Access,
+         "Parse_Request types the websocket upgrade and keeps its key");
+      Register_Routine
+        (T,
+         Test_Upgrade_Needs_All_Four'Access,
+         "Parse_Request needs all four upgrade headers to agree");
+      Register_Routine
+        (T,
+         Test_Upgrade_Head_Bytes'Access,
+         "Upgrade_Head emits the exact 101 head");
+      Register_Routine
+        (T, Test_Never_Upgrade'Access, "Never_Upgrade refuses every upgrade");
+      Register_Routine
+        (T,
+         Test_426_Head_Carries_Upgrade'Access,
+         "Response_Head puts the upgrade offer on a 426 only");
    end Register_Tests;
 
    overriding
