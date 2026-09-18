@@ -6,6 +6,7 @@ with Ada.Strings.Fixed;
 with GNAT.Sockets;
 
 with Nuntius.Fd_Poll;
+with Nuntius.Socket_Io;
 
 procedure Nuntius.Web.Server (Bind : String; Port : Natural) is
 
@@ -29,24 +30,6 @@ procedure Nuntius.Web.Server (Bind : String; Port : Natural) is
       return S (S'First + 1 .. S'Last);
    end Image;
 
-   --  Send the whole response; Send_Socket raises on a dead peer and
-   --  the Send_Timeout bounds a stuck one.
-   procedure Send_All (Sock : Socket_Type; Text : String) is
-      Buf   : Ada.Streams.Stream_Element_Array (1 .. Text'Length);
-      First : Ada.Streams.Stream_Element_Offset := Buf'First;
-      Last  : Ada.Streams.Stream_Element_Offset;
-   begin
-      for K in Text'Range loop
-         Buf (Ada.Streams.Stream_Element_Offset (K - Text'First + 1)) :=
-           Ada.Streams.Stream_Element (Character'Pos (Text (K)));
-      end loop;
-      while First <= Buf'Last loop
-         Send_Socket (Sock, Buf (First .. Buf'Last), Last);
-         exit when Last < First;
-         First := Last + 1;
-      end loop;
-   end Send_All;
-
    --  One connection: read the request head, parse (pure parent), read
    --  the body a POST declared, dispatch, respond.  A receive timeout,
    --  a peer close before the bytes are all in, or a connection past
@@ -66,7 +49,7 @@ procedure Nuntius.Web.Server (Bind : String; Port : Natural) is
 
       procedure Respond (S : Status; Content_Type, Payload : String) is
       begin
-         Send_All
+         Nuntius.Socket_Io.Send_All
            (Sock, Response_Head (S, Content_Type, Payload'Length) & Payload);
       end Respond;
 
