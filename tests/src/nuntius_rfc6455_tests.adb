@@ -159,6 +159,105 @@ package body Nuntius_Rfc6455_Tests is
       Assert (Base64 (Two) = "Zm8=", "base64 of two bytes pads =");
    end Test_Base64;
 
+   --  A server MUST NOT mask (RFC 6455 5.1), so its frame is a header
+   --  and then the payload verbatim -- these pin the three length forms.
+   procedure Test_Server_Header_Short
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Into : Octets (1 .. Max_Server_Header);
+      Last : Server_Header_Count;
+   begin
+      Server_Header (Op_Text, 5, Into, Last);
+      Assert (Last = 2, "a short length needs two bytes");
+      Assert (Into (1 .. 2) = [16#81#, 16#05#], "FIN + text, length 5");
+   end Test_Server_Header_Short;
+
+   procedure Test_Server_Header_16
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Into : Octets (1 .. Max_Server_Header);
+      Last : Server_Header_Count;
+   begin
+      Server_Header (Op_Text, 256, Into, Last);
+      Assert (Last = 4, "the 16-bit form needs four bytes");
+      Assert
+        (Into (1 .. 4) = [16#81#, 16#7E#, 16#01#, 16#00#],
+         "126 then the length big-endian");
+   end Test_Server_Header_16;
+
+   procedure Test_Server_Header_64
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Into : Octets (1 .. Max_Server_Header);
+      Last : Server_Header_Count;
+   begin
+      Server_Header (Op_Text, 65_536, Into, Last);
+      Assert (Last = 10, "the 64-bit form needs ten bytes");
+      Assert
+        (Into (1 .. 10) = [16#81#, 16#7F#, 0, 0, 0, 0, 0, 1, 0, 0],
+         "127 then the length in eight big-endian bytes");
+   end Test_Server_Header_64;
+
+   --  Decode is the INBOUND reader, but the loopback tests read the
+   --  server's own frames with it, so every form it writes it reads.
+   procedure Test_Server_Header_Decodes
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Into : Octets (1 .. Max_Server_Header);
+      Last : Server_Header_Count;
+
+      procedure Round_Trip (N : Natural; Header_Bytes : Positive) is
+      begin
+         Server_Header (Op_Text, N, Into, Last);
+         declare
+            H : constant Header := Decode (Into (1 .. Last));
+         begin
+            Assert (H.Status = Ready, "the header decodes Ready");
+            Assert (not H.Masked, "a server frame is never masked");
+            Assert (H.Fin, "one frame, final");
+            Assert (H.Op = Op_Text, "text");
+            Assert (H.Payload_Bytes = N, "the length survives");
+            Assert (H.Header_Bytes = Last, "Header_Bytes is what was written");
+            Assert (Last = Header_Bytes, "the form is the expected one");
+         end;
+      end Round_Trip;
+   begin
+      Round_Trip (5, 2);
+      Round_Trip (256, 4);
+      Round_Trip (65_536, 10);
+      --  The size WP-N5's loopback client reads back.
+      Round_Trip (70_000, 10);
+      Round_Trip (Natural'Last, 10);
+   end Test_Server_Header_Decodes;
+
+   --  A 64-bit length past what a Natural holds is a violation, not a
+   --  number: nothing downstream could index it.
+   procedure Test_Decode_Rejects_Huge_Length
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      --  2**31, one past Natural'Last.
+      Wire  : constant Octets := [16#81#, 16#7F#, 0, 0, 0, 0, 16#80#, 0, 0, 0];
+      --  2**32.
+      Wider : constant Octets := [16#81#, 16#7F#, 0, 0, 0, 1, 0, 0, 0, 0];
+   begin
+      Assert (Decode (Wire).Status = Invalid, "2**31 is not a length");
+      Assert (Decode (Wider).Status = Invalid, "2**32 even less so");
+   end Test_Decode_Rejects_Huge_Length;
+
+   procedure Test_Close_Payload (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+   begin
+      Assert (Close_Payload (1_000) = [16#03#, 16#E8#], "1000, network order");
+      Assert (Close_Payload (4_401) = [16#11#, 16#31#], "the refusal code");
+      Assert (Close_Payload (1_000)'Length = 2, "always two bytes");
+   end Test_Close_Payload;
+
    overriding
    procedure Register_Tests (T : in out Test) is
    begin
@@ -175,6 +274,22 @@ package body Nuntius_Rfc6455_Tests is
       Register_Routine
         (T, Test_Encode_Text_Roundtrip'Access, "encode text round-trips");
       Register_Routine (T, Test_Base64'Access, "base64 encodes per RFC 4648");
+      Register_Routine
+        (T, Test_Server_Header_Short'Access, "server header, short length");
+      Register_Routine
+        (T, Test_Server_Header_16'Access, "server header, 16-bit length");
+      Register_Routine
+        (T, Test_Server_Header_64'Access, "server header, 64-bit length");
+      Register_Routine
+        (T,
+         Test_Server_Header_Decodes'Access,
+         "every server header Decode reads back");
+      Register_Routine
+        (T,
+         Test_Decode_Rejects_Huge_Length'Access,
+         "a length past Natural is a violation");
+      Register_Routine
+        (T, Test_Close_Payload'Access, "the close code, network order");
    end Register_Tests;
 
    overriding
