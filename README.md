@@ -29,8 +29,9 @@ shipped here.
   behind the websocket adapter, in the SPARK core: its ring arithmetic and
   refusal semantics are *proved*, not unit-tested.
 - **`Nuntius.Fd_Poll` / `Nuntius.Fd_Wake`** — the event-loop fd primitives:
-  a zero-timeout "would a read return now?" check over one descriptor, and
-  an `eventfd(2)`-backed wake token (Linux-only) whose signals coalesce and
+  a zero-timeout "would a read return now?" check over one descriptor,
+  `Wait_Any` over several at once (which of them woke us), and an
+  `eventfd(2)`-backed wake token (Linux-only) whose signals coalesce and
   whose drain leaves the fd quiet. The non-blocking companions to
   `Nuntius.Http.Fetch.Wait`'s blocking multi-fd poll.
 - **`Nuntius.Web` + `.Server` + `.Files`** — the serving side: a proven
@@ -40,7 +41,19 @@ shipped here.
   probes and dribblers). Routing is the consumer's `Handle` formal —
   the crate ships no route table. `On_Listening` reports the bound port,
   so tests serve on port 0; `Files.Read_Capped` reads static content
-  whole or refuses (`Read_Ok`/`Missing`/`Oversized`).
+  whole or refuses (`Read_Ok`/`Missing`/`Oversized`). A websocket
+  upgrade is the one connection the serial loop does not keep: when the
+  consumer's `Accepts_Upgrade` takes it, the loop writes the 101
+  (`Web.Upgrade_Head` over `Web.Handshake.Accept_Key`) and hands the
+  socket to `Adopt`, never touching it again.
+- **`Nuntius.Ws.Peer`** — the server side of a websocket, for whoever
+  adopted one: sends UNMASKED (RFC 6455 5.1) with the header written
+  alone so the payload follows verbatim, and reads only when the
+  caller's poll says it may, draining whole buffered frames before it
+  issues a `recv`. Inbound is deliberately tiny and strict — a ping is
+  ponged, a close echoed, anything binary, fragmented or oversize
+  answered with a close code. `Nuntius.Socket_Io` is the whole-response
+  write both it and the serving loop share.
 
 ## Use it
 
