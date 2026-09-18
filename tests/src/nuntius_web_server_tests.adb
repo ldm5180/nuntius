@@ -7,6 +7,8 @@ with GNAT.Sockets;
 with AUnit.Assertions; use AUnit.Assertions;
 
 with Nuntius.Web.Server;
+with Nuntius.Ws.Native_Client;
+with Nuntius.Ws.Peer;
 
 --  The serial serve loop over a REAL loopback socket -- the coverage
 --  the mechanics never had while they lived in a consumer: 200 through
@@ -36,11 +38,23 @@ package body Nuntius_Web_Server_Tests is
       function Handled return Natural;
       procedure Request_Stop;
       function Stopped return Boolean;
+      procedure Set_Stream_Port (P : Natural);
+      function Stream_Port return Natural;
+      procedure Keep (Sock : GNAT.Sockets.Socket_Type);
+      procedure Take (Sock : out GNAT.Sockets.Socket_Type; Got : out Boolean);
+      function Adopted return Natural;
+      procedure Note_Upgrade;
+      function Saw_Upgrade return Boolean;
    private
-      Port_V       : Natural := 0;
-      Short_Port_V : Natural := 0;
-      Handled_V    : Natural := 0;
-      Stop_V       : Boolean := False;
+      Port_V        : Natural := 0;
+      Short_Port_V  : Natural := 0;
+      Stream_Port_V : Natural := 0;
+      Handled_V     : Natural := 0;
+      Stop_V        : Boolean := False;
+      Adopted_V     : Natural := 0;
+      Held_V        : GNAT.Sockets.Socket_Type := GNAT.Sockets.No_Socket;
+      Has_Held_V    : Boolean := False;
+      Upgrade_V     : Boolean := False;
    end Cells;
 
    protected body Cells is
@@ -48,8 +62,12 @@ package body Nuntius_Web_Server_Tests is
       begin
          Port_V := 0;
          Short_Port_V := 0;
+         Stream_Port_V := 0;
          Handled_V := 0;
          Stop_V := False;
+         Adopted_V := 0;
+         Has_Held_V := False;
+         Upgrade_V := False;
       end Reset;
 
       procedure Set_Port (P : Natural) is
@@ -83,6 +101,40 @@ package body Nuntius_Web_Server_Tests is
 
       function Stopped return Boolean
       is (Stop_V);
+
+      procedure Set_Stream_Port (P : Natural) is
+      begin
+         Stream_Port_V := P;
+      end Set_Stream_Port;
+
+      function Stream_Port return Natural
+      is (Stream_Port_V);
+
+      procedure Keep (Sock : GNAT.Sockets.Socket_Type) is
+      begin
+         Held_V := Sock;
+         Has_Held_V := True;
+         Adopted_V := Adopted_V + 1;
+      end Keep;
+
+      procedure Take (Sock : out GNAT.Sockets.Socket_Type; Got : out Boolean)
+      is
+      begin
+         Sock := Held_V;
+         Got := Has_Held_V;
+         Has_Held_V := False;
+      end Take;
+
+      function Adopted return Natural
+      is (Adopted_V);
+
+      procedure Note_Upgrade is
+      begin
+         Upgrade_V := True;
+      end Note_Upgrade;
+
+      function Saw_Upgrade return Boolean
+      is (Upgrade_V);
    end Cells;
 
    function Stop return Boolean
@@ -126,6 +178,41 @@ package body Nuntius_Web_Server_Tests is
          & Payload);
    end Handle;
 
+   procedure On_Listening_Stream (Port : Natural) is
+   begin
+      Cells.Set_Stream_Port (Port);
+   end On_Listening_Stream;
+
+   --  The consumer's policy: this ONE target takes upgrades.
+   function Takes_Stream (R : Nuntius.Web.Request) return Boolean
+   is (R.Upgrade and then Nuntius.Web.Target_Of (R) = "/api/stream");
+
+   procedure Keep (R : Nuntius.Web.Request; Sock : GNAT.Sockets.Socket_Type) is
+      pragma Unreferenced (R);
+   begin
+      Cells.Keep (Sock);
+   end Keep;
+
+   --  What an upgrade the consumer did NOT take meets.
+   procedure Handle_Stream
+     (R       : Nuntius.Web.Request;
+      Payload : String;
+      Respond :
+        not null access procedure
+          (S : Nuntius.Web.Status; Content_Type, Payload : String))
+   is
+      pragma Unreferenced (Payload);
+   begin
+      Cells.Bump_Handled;
+      if R.Upgrade then
+         Cells.Note_Upgrade;
+         Respond (Nuntius.Web.Unavailable_503, "text/plain", "stream down");
+      else
+         Respond
+           (Nuntius.Web.Upgrade_Required_426, "text/plain", "websocket only");
+      end if;
+   end Handle_Stream;
+
    procedure Serve is new
      Nuntius.Web.Server
        (Stop         => Stop,
@@ -146,6 +233,29 @@ package body Nuntius_Web_Server_Tests is
         On_Listening       => On_Listening_Short,
         Connection_Seconds => 1,
         Handle             => Handle);
+
+   procedure Serve_Stream is new
+     Nuntius.Web.Server
+       (Stop            => Stop,
+        Sleep_Ms        => Sleep_Ms,
+        Log_Info        => Log_Quiet,
+        Log_Warn        => Log_Quiet,
+        On_Listening    => On_Listening_Stream,
+        Handle          => Handle_Stream,
+        Accepts_Upgrade => Takes_Stream,
+        Adopt           => Keep);
+
+   --  The loopback dialer: a SMALL idle limit and a frame cap past the
+   --  16-bit length form, so a wrong answer fails in seconds instead of
+   --  hanging out the adapter's 45 s default.
+   package Ws is new
+     Nuntius.Ws.Native_Client
+       (Ring_Depth      => 8,
+        Max_Frame_Bytes => 70_000,
+        Idle_Limit      => 2.0,
+        Poll_Slice      => 0.25);
+
+   package Peers is new Nuntius.Ws.Peer (Max_Inbound_Bytes => 512);
 
    --  One serial exchange: connect, send Request_Text, read to the
    --  server's Connection: close.  Half_Head sends without the blank
@@ -469,6 +579,151 @@ package body Nuntius_Web_Server_Tests is
          "the loop is free again straight after: " & To_String (After));
    end Test_Dribble_Is_Dropped;
 
+   function Test_Stream_Port return Natural
+   is (Cells.Stream_Port);
+
+   function Ws_Url (Port : Natural; Path : String) return String
+   is ("ws://127.0.0.1:"
+       & Ada.Strings.Fixed.Trim (Natural'Image (Port), Ada.Strings.Both)
+       & Path);
+
+   Hello_Frame : constant String := "{""hello"":{""proto"":1}}";
+
+   procedure Test_Upgrade_Is_Adopted
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Port_Seen : Natural := 0;
+      C         : Ws.Client;
+      Buf       : String (1 .. 256);
+      Last      : Natural := 0;
+      Ok        : Boolean := False;
+      Timed_Out : Boolean := False;
+      Sock      : GNAT.Sockets.Socket_Type;
+      Got       : Boolean := False;
+      P         : Peers.Peer;
+      Sent      : Boolean := False;
+   begin
+      Cells.Reset;
+      declare
+         task Server_Task;
+
+         task body Server_Task is
+         begin
+            Serve_Stream ("127.0.0.1", 0);
+         end Server_Task;
+      begin
+         Port_Seen := Await_Port (Test_Stream_Port'Access);
+         if Port_Seen /= 0 then
+            Ws.Connect (C, Ws_Url (Port_Seen, "/api/stream"), Ok);
+            if Ok then
+               for K in 1 .. 200 loop
+                  Cells.Take (Sock, Got);
+                  exit when Got;
+                  delay 0.01;
+               end loop;
+               if Got then
+                  Peers.Adopt (P, Sock);
+                  Peers.Send_Text (P, Hello_Frame, Sent);
+                  Ws.Receive_For (C, Buf, Last, 2.0, Ok, Timed_Out);
+               end if;
+            end if;
+         end if;
+         Cells.Request_Stop;
+      exception
+         when others =>
+            Cells.Request_Stop;
+            raise;
+      end;
+
+      Assert (Port_Seen /= 0, "the server reported its bound port");
+      Assert (Got, "the loop handed the socket to Adopt");
+      Assert (Cells.Adopted = 1, "exactly once");
+      Assert (Sent, "the peer wrote a frame on it");
+      Assert
+        (Ok and then not Timed_Out and then Buf (1 .. Last) = Hello_Frame,
+         "and the dialer read it back whole");
+      Assert (Cells.Handled = 0, "Handle never saw the upgrade");
+      Ws.Close (C);
+      Peers.Close (P, 1_000);
+   end Test_Upgrade_Is_Adopted;
+
+   procedure Test_Upgrade_Refused_Reaches_Handle
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Port_Seen : Natural := 0;
+      C         : Ws.Client;
+      Ok        : Boolean := True;
+   begin
+      Cells.Reset;
+      declare
+         task Server_Task;
+
+         task body Server_Task is
+         begin
+            Serve_Stream ("127.0.0.1", 0);
+         end Server_Task;
+      begin
+         Port_Seen := Await_Port (Test_Stream_Port'Access);
+         if Port_Seen /= 0 then
+            Ws.Connect (C, Ws_Url (Port_Seen, "/elsewhere"), Ok);
+         end if;
+         Cells.Request_Stop;
+      exception
+         when others =>
+            Cells.Request_Stop;
+            raise;
+      end;
+
+      Assert (Port_Seen /= 0, "the server reported its bound port");
+      Assert (not Ok, "an upgrade the consumer refuses does not connect");
+      Assert (Cells.Adopted = 0, "and nothing was adopted");
+      Assert (Cells.Handled = 1, "it reached Handle instead");
+      Assert (Cells.Saw_Upgrade, "which saw it typed as an upgrade");
+      Ws.Close (C);
+   end Test_Upgrade_Refused_Reaches_Handle;
+
+   procedure Test_Plain_Get_On_Stream_Path
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Port_Seen : Natural := 0;
+      Reply     : Unbounded_String;
+   begin
+      Cells.Reset;
+      declare
+         task Server_Task;
+
+         task body Server_Task is
+         begin
+            Serve_Stream ("127.0.0.1", 0);
+         end Server_Task;
+      begin
+         Port_Seen := Await_Port (Test_Stream_Port'Access);
+         if Port_Seen /= 0 then
+            Reply :=
+              To_Unbounded_String
+                (Exchange
+                   (Port_Seen, "GET /api/stream HTTP/1.1" & CRLF & CRLF));
+         end if;
+         Cells.Request_Stop;
+      exception
+         when others =>
+            Cells.Request_Stop;
+            raise;
+      end;
+
+      Assert (Port_Seen /= 0, "the server reported its bound port");
+      Assert (Cells.Adopted = 0, "a plain GET adopts nothing");
+      Assert (Cells.Handled = 1, "it is the GET it always was");
+      Assert (not Cells.Saw_Upgrade, "and is not typed as an upgrade");
+      Assert
+        (Has (To_String (Reply), "426 Upgrade Required")
+         and then Has (To_String (Reply), "Upgrade: websocket"),
+         "the consumer answered it 426: " & To_String (Reply));
+   end Test_Plain_Get_On_Stream_Path;
+
    overriding
    procedure Register_Tests (T : in out Test) is
    begin
@@ -481,6 +736,18 @@ package body Nuntius_Web_Server_Tests is
         (T,
          Test_Dribble_Is_Dropped'Access,
          "the whole-connection budget ends a dribble and frees the loop");
+      Register_Routine
+        (T,
+         Test_Upgrade_Is_Adopted'Access,
+         "an accepted upgrade is answered 101 and handed over");
+      Register_Routine
+        (T,
+         Test_Upgrade_Refused_Reaches_Handle'Access,
+         "an upgrade the consumer refuses reaches Handle");
+      Register_Routine
+        (T,
+         Test_Plain_Get_On_Stream_Path'Access,
+         "a plain GET on the stream target is still a GET");
    end Register_Tests;
 
    overriding

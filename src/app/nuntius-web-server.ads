@@ -13,7 +13,11 @@
 --  and supervisors can find the server; production wiring may ignore
 --  it.  The loop is no longer assumed to be loopback-only: a
 --  whole-connection budget (Connection_Seconds) bounds what one peer
---  can hold, however it paces its bytes.
+--  can hold, however it paces its bytes.  An upgrade request the
+--  consumer accepts is answered 101 and handed to Adopt; the loop
+--  never touches that socket again.
+
+with GNAT.Sockets;
 
 generic
    with function Stop return Boolean;
@@ -37,4 +41,11 @@ generic
         Respond :
           not null access procedure
             (S : Status; Content_Type, Payload : String));
+   --  Whether a well-formed upgrade request on this target is taken.
+   --  True means the loop writes the 101 and calls Adopt with the
+   --  request and the socket, which the consumer then OWNS -- the loop
+   --  neither reads nor closes it again.  False means Handle answers
+   --  it like any other GET.  Adopt must not raise.
+   with function Accepts_Upgrade (R : Request) return Boolean is Never_Upgrade;
+   with procedure Adopt (R : Request; Sock : GNAT.Sockets.Socket_Type) is null;
 procedure Nuntius.Web.Server (Bind : String; Port : Natural);

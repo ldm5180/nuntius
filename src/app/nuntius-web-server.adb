@@ -7,6 +7,7 @@ with GNAT.Sockets;
 
 with Nuntius.Fd_Poll;
 with Nuntius.Socket_Io;
+with Nuntius.Web.Handshake;
 
 procedure Nuntius.Web.Server (Bind : String; Port : Natural) is
 
@@ -35,7 +36,7 @@ procedure Nuntius.Web.Server (Bind : String; Port : Natural) is
    --  a peer close before the bytes are all in, or a connection past
    --  its budget drops SILENTLY -- port scanners, TCP health probes,
    --  and dribbling clients never reach the outer connection-error log.
-   procedure Serve_One (Sock : Socket_Type) is
+   procedure Serve_One (Sock : Socket_Type; Adopted : in out Boolean) is
       --  Whatever the peer's pacing, this is all the serial loop lends
       --  it.  Checked after every read, of the head and of the body.
       Deadline : constant Ada.Calendar.Time :=
@@ -133,6 +134,17 @@ procedure Nuntius.Web.Server (Bind : String; Port : Natural) is
          Ok := True;
       end Read_Body;
 
+      --  The send comes FIRST: a raise there means nothing was handed
+      --  over and the accept loop still owns the socket.  Adopt is the
+      --  last call, and Adopted is set the statement after it returns.
+      procedure Upgrade (R : Request) is
+      begin
+         Nuntius.Socket_Io.Send_All
+           (Sock, Upgrade_Head (Handshake.Accept_Key (Ws_Key_Of (R))));
+         Adopt (R, Sock);
+         Adopted := True;
+      end Upgrade;
+
       procedure Dispatch (R : Request) is
       begin
          if R.Length_Refused then
@@ -147,6 +159,8 @@ procedure Nuntius.Web.Server (Bind : String; Port : Natural) is
          elsif R.Method = Post and then R.Content_Length = 0 then
             --  A chunked or lengthless POST is refused up front.
             Respond (Bad_Request_400, "text/plain", "length required");
+         elsif R.Upgrade and then Accepts_Upgrade (R) then
+            Upgrade (R);
          elsif R.Method = Get then
             Handle (R, "", Respond'Access);
          else
@@ -220,8 +234,11 @@ begin
    while not Stop loop
       if Nuntius.Fd_Poll.Readable (To_C (Listener)) then
          declare
-            Sock : Socket_Type := No_Socket;
-            From : Sock_Addr_Type;
+            Sock    : Socket_Type := No_Socket;
+            From    : Sock_Addr_Type;
+            --  in out, not out: a raise anywhere in Serve_One has to
+            --  leave this False so the loop still closes the socket.
+            Adopted : Boolean := False;
          begin
             Accept_Socket (Listener, Sock, From);
             Set_Socket_Option
@@ -232,8 +249,10 @@ begin
               (Sock,
                Socket_Level,
                (Name => Send_Timeout, Timeout => Io_Timeout));
-            Serve_One (Sock);
-            Close_Socket (Sock);
+            Serve_One (Sock, Adopted);
+            if not Adopted then
+               Close_Socket (Sock);
+            end if;
          exception
             when E : others =>
                --  One bad client must never kill the caller's task.
@@ -241,7 +260,9 @@ begin
                --  reporting readable while accept keeps failing, an
                --  unslept retry is a hot spin.
                begin
-                  Close_Socket (Sock);
+                  if not Adopted then
+                     Close_Socket (Sock);
+                  end if;
                exception
                   when others =>
                      null;
