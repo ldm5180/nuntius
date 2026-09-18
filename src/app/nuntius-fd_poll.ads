@@ -16,4 +16,16 @@ package Nuntius.Fd_Poll is
    --  once (Readable without the answer).
    procedure Wait (Fd : Integer; Timeout_Ms : Natural);
 
+   type Fd_Set is array (Positive range <>) of Integer;
+   type Ready_Set is array (Positive range <>) of Boolean;
+
+   --  One poll(2) over every fd at once, for at most Timeout_Ms: an
+   --  event loop waiting on its wake cell AND its clients needs to be
+   --  told which of them woke it.  A negative fd is ignored by poll(2)
+   --  itself and reads not ready, so a sparse table needs no guards.
+   --  Does NOT read anything -- the caller drains.
+   procedure Wait_Any
+     (Fds : Fd_Set; Timeout_Ms : Natural; Ready : out Ready_Set)
+   with Pre => Ready'First = Fds'First and then Ready'Length = Fds'Length;
+
 end Nuntius.Fd_Poll;

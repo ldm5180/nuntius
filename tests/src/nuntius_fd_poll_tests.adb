@@ -125,6 +125,39 @@ package body Nuntius_Fd_Poll_Tests is
       Assert (Took < 2.0, "of the timeout, and no longer");
    end Test_Wait_Unarmed_Sleeps;
 
+   --  One poll over several fds: the stream task waits on its wake
+   --  cell and every client at once, and has to be told WHICH woke it.
+   procedure Test_Wait_Any_Reports_Ready
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      use Nuntius.Fd_Poll;
+
+      A     : constant Integer := Nuntius.Fd_Wake.Create;
+      B     : constant Integer := Nuntius.Fd_Wake.Create;
+      Ready : Ready_Set (1 .. 3);
+      Start : Time;
+   begin
+      Assert (A >= 0 and then B >= 0, "two eventfds");
+
+      Nuntius.Fd_Wake.Signal (B);
+      Wait_Any ([A, B, -1], 100, Ready);
+      Assert (not Ready (1), "the quiet fd is not ready");
+      Assert (Ready (2), "the signalled one is");
+      Assert (not Ready (3), "and a negative fd never is");
+
+      Nuntius.Fd_Wake.Drain (B);
+      Start := Clock;
+      Wait_Any ([A, B, -1], 100, Ready);
+      Assert
+        (not Ready (1) and then not Ready (2) and then not Ready (3),
+         "nothing signalled, nothing ready");
+      Assert (Elapsed_Since (Start) >= 0.1, "and the timeout was waited out");
+
+      Nuntius.Fd_Wake.Close (A);
+      Nuntius.Fd_Wake.Close (B);
+   end Test_Wait_Any_Reports_Ready;
+
    overriding
    procedure Register_Tests (T : in out Test) is
    begin
@@ -142,6 +175,10 @@ package body Nuntius_Fd_Poll_Tests is
         (T,
          Test_Wait_Unarmed_Sleeps'Access,
          "Wait on an unarmed fd is a plain sleep");
+      Register_Routine
+        (T,
+         Test_Wait_Any_Reports_Ready'Access,
+         "Wait_Any says which of several fds woke it");
    end Register_Tests;
 
    overriding

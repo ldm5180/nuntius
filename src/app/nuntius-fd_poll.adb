@@ -30,6 +30,33 @@ package body Nuntius.Fd_Poll is
       return C_Poll (P'Access, 1, 0) > 0 and then (P.Revents and Pollin) /= 0;
    end Readable;
 
+   procedure Wait_Any
+     (Fds : Fd_Set; Timeout_Ms : Natural; Ready : out Ready_Set)
+   is
+      --  aliased, and passed by the first element's access: the same
+      --  shape Nuntius.Http.Fetch.Curl's wait table uses.
+      type Poll_Table is array (Fds'Range) of aliased Pollfd;
+
+      P      : Poll_Table :=
+        [for K in Fds'Range =>
+           (Fd => Interfaces.C.int (Fds (K)), Events => Pollin, Revents => 0)];
+      Unused : Interfaces.C.int;
+   begin
+      Ready := [others => False];
+      if Fds'Length = 0 then
+         delay Duration (Timeout_Ms) / 1_000.0;
+         return;
+      end if;
+      Unused :=
+        C_Poll
+          (P (P'First)'Access,
+           Interfaces.C.unsigned_long (Fds'Length),
+           Interfaces.C.int (Timeout_Ms));
+      for K in Fds'Range loop
+         Ready (K) := (P (K).Revents and Pollin) /= 0;
+      end loop;
+   end Wait_Any;
+
    procedure Wait (Fd : Integer; Timeout_Ms : Natural) is
       P      : aliased Pollfd :=
         (Fd => Interfaces.C.int (Fd), Events => Pollin, Revents => 0);
