@@ -8,6 +8,7 @@ with Nuntius_Http_Fetch_Curl_Tests;
 with Nuntius_Rfc6455_Tests;
 with Nuntius_Tcp_Native_Tests;
 with Nuntius_Web_Files_Tests;
+with Nuntius_Web_Handshake_Tests;
 with Nuntius_Web_Server_Tests;
 with Nuntius_Web_Tests;
 with Nuntius_Ws_Aws_Client_Tests;
@@ -35,6 +36,7 @@ package body Nuntius_Suite is
       Add (new Nuntius_Fd_Wake_Tests.Test);
       Add (new Nuntius_Web_Tests.Test);
       Add (new Nuntius_Web_Files_Tests.Test);
+      Add (new Nuntius_Web_Handshake_Tests.Test);
       Add (new Nuntius_Web_Server_Tests.Test);
       return Result;
    end Suite;
