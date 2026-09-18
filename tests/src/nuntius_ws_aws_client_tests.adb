@@ -30,10 +30,11 @@ package body Nuntius_Ws_Aws_Client_Tests is
 
    procedure Test_Unconnected (T : in out AUnit.Test_Cases.Test_Case'Class) is
       pragma Unreferenced (T);
-      C    : Ws_Clients.Client;
-      Buf  : String (1 .. 64);
-      Last : Natural;
-      Ok   : Boolean;
+      C     : Ws_Clients.Client;
+      Buf   : String (1 .. 64);
+      Last  : Natural;
+      Ok    : Boolean;
+      Timed : Boolean;
    begin
       Ws_Clients.Send_Text (C, "hello", Ok);
       Assert (not Ok, "send before any dial reports Ok = False");
@@ -41,6 +42,11 @@ package body Nuntius_Ws_Aws_Client_Tests is
       Ws_Clients.Receive (C, Buf, Last, Ok);
       Assert (not Ok, "receive before any dial reports Ok = False");
       Assert (Last = 0, "receive before any dial delivers nothing");
+
+      Ws_Clients.Receive_For (C, Buf, Last, 0.1, Ok, Timed);
+      Assert
+        (not Ok and then not Timed,
+         "a timed receive before any dial is dead, never a timeout");
 
       --  Closing a never-dialed client is a harmless no-op.
       Ws_Clients.Close (C);
@@ -134,6 +140,26 @@ package body Nuntius_Ws_Aws_Client_Tests is
       end;
 
       Assert (not Ok, "a broken-handshake dial reports Ok = False");
+
+      --  THE REASON MUST SURVIVE.  Connect keeps the port contract (Ok
+      --  False, never a raise), but the exception it absorbed is the
+      --  only thing that says WHY -- and discarding it cost a real
+      --  diagnosis a throwaway main: a total TLS failure surfaced as
+      --  nothing but "connect failed" on a five-second retry, for as
+      --  long as anyone cared to watch.
+      Assert
+        (Ws_Clients.Last_Error (C) /= "",
+         "the absorbed dial exception is readable back");
+
+      --  And it must name the WIRE's failure, never a local config gap
+      --  the adapter should have prevented: AWS defaults a CLIENT dial
+      --  to a server's "cert.pem", and the adapter now arms the
+      --  client-side TLS defaults itself before any wss dial.
+      Assert
+        (Ada.Strings.Fixed.Index (Ws_Clients.Last_Error (C), "cert.pem") = 0,
+         "the failure is the peer's, not a missing local cert.pem;"
+         & " got: "
+         & Ws_Clients.Last_Error (C));
 
       --  The half-built dial must not poison the client: a follow-up
       --  refused dial still comes back clean.

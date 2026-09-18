@@ -60,7 +60,19 @@ is
       Ok   : out Boolean);
 
    overriding
+   procedure Receive_For
+     (Self      : in out Client;
+      Into      : out String;
+      Last      : out Natural;
+      Patience  : Duration;
+      Ok        : out Boolean;
+      Timed_Out : out Boolean);
+
+   overriding
    procedure Close (Self : in out Client);
+
+   overriding
+   function Losses (Self : Client) return Nuntius.Ws.Loss_Report;
 
 private
 
@@ -106,6 +118,14 @@ private
       Assembly : String (1 .. Max_Frame_Bytes) := [others => ' '];
       Asm_Len  : Frame_Length := 0;
       Dead     : Boolean := False;
+
+      --  Frames refused for LENGTH before they ever reached the ring:
+      --  the read machine kills the connection on an oversized header
+      --  or an overlong reassembly, so the fifo never sees them and
+      --  cannot tally them.  Saturating, like the fifo's own.
+      Over_N   : Natural := 0;
+      Over_Max : Natural := 0;
+
       Pending  : Command := None;
       Pong     : String (1 .. 125) := [others => ' '];
       Pong_Len : Control_Length := 0;
@@ -187,6 +207,13 @@ private
           [others => 0];
       Accum_Len  : Natural := 0;
       Mask_Seed  : Interfaces.Unsigned_32 := 16#1234_5678#;
+
+      --  The idle clock lives on the CLIENT, not in a Receive local:
+      --  Receive_For returns early on a healthy timeout, and a per-call
+      --  clock would reset with every patient call -- a silent
+      --  partition would then time out politely forever and never be
+      --  reported dead.  Reset by any traffic, and by a fresh dial.
+      Idle : Duration := 0.0;
    end record;
 
 end Nuntius.Ws.Native_Client;

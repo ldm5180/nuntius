@@ -1,3 +1,4 @@
+with Ada.Calendar;
 with Ada.Exceptions;
 with Ada.Streams;
 with Ada.Strings.Fixed;
@@ -9,6 +10,7 @@ with Nuntius.Fd_Poll;
 procedure Nuntius.Web.Server (Bind : String; Port : Natural) is
 
    use GNAT.Sockets;
+   use type Ada.Calendar.Time;
    use type Ada.Streams.Stream_Element_Offset;
 
    --  Stop-notice bound between accepts.
@@ -45,60 +47,153 @@ procedure Nuntius.Web.Server (Bind : String; Port : Natural) is
       end loop;
    end Send_All;
 
-   --  One connection: read the request head, parse (pure parent),
-   --  dispatch, respond.  A receive timeout or a peer close before the
-   --  header terminator drops SILENTLY -- port scanners, TCP health
-   --  probes, and dribbling clients never reach the outer connection-
-   --  error log.
+   --  One connection: read the request head, parse (pure parent), read
+   --  the body a POST declared, dispatch, respond.  A receive timeout,
+   --  a peer close before the bytes are all in, or a connection past
+   --  its budget drops SILENTLY -- port scanners, TCP health probes,
+   --  and dribbling clients never reach the outer connection-error log.
    procedure Serve_One (Sock : Socket_Type) is
-      Buf : String (1 .. Max_Request_Bytes);
-      Len : Natural := 0;
+      --  Whatever the peer's pacing, this is all the serial loop lends
+      --  it.  Checked after every read, of the head and of the body.
+      Deadline : constant Ada.Calendar.Time :=
+        Ada.Calendar.Clock + Duration (Connection_Seconds);
+
+      Buf       : String (1 .. Max_Request_Bytes);
+      Len       : Natural := 0;
+      Head_Last : Natural := 0;   --  last byte of the head terminator
+
+      type Head_Result is (Complete, Dropped, Over_Budget);
 
       procedure Respond (S : Status; Content_Type, Payload : String) is
       begin
          Send_All
            (Sock, Response_Head (S, Content_Type, Payload'Length) & Payload);
       end Respond;
-   begin
-      loop
-         declare
-            Chunk : Ada.Streams.Stream_Element_Array (1 .. 1_024);
-            Last  : Ada.Streams.Stream_Element_Offset;
-         begin
-            begin
-               Receive_Socket (Sock, Chunk, Last);
-            exception
-               when Socket_Error =>
-                  --  Timeout or reset before a full head: quiet drop.
-                  return;
-            end;
-            if Last < Chunk'First then
-               --  Peer closed before the terminator: quiet drop.
-               return;
-            end if;
-            if Len + Natural (Last) > Buf'Length then
-               Respond (Bad_Request_400, "text/plain", "bad request");
-               return;
-            end if;
-            for K in 1 .. Last loop
-               Buf (Len + Natural (K)) := Character'Val (Chunk (K));
-            end loop;
-            Len := Len + Natural (Last);
-         end;
-         exit when Ada.Strings.Fixed.Index (Buf (1 .. Len), Terminator) > 0;
-      end loop;
 
-      declare
-         R : constant Request := Parse_Request (Buf (1 .. Len));
+      function Read_Head return Head_Result is
       begin
-         if not R.Well_Formed then
+         loop
+            declare
+               Chunk : Ada.Streams.Stream_Element_Array (1 .. 1_024);
+               Last  : Ada.Streams.Stream_Element_Offset;
+            begin
+               begin
+                  Receive_Socket (Sock, Chunk, Last);
+               exception
+                  when Socket_Error =>
+                     --  Timeout or reset before a full head: quiet drop.
+                     return Dropped;
+               end;
+               if Last < Chunk'First then
+                  --  Peer closed before the terminator: quiet drop.
+                  return Dropped;
+               end if;
+               if Ada.Calendar.Clock > Deadline then
+                  return Dropped;
+               end if;
+               if Len + Natural (Last) > Buf'Length then
+                  return Over_Budget;
+               end if;
+               for K in 1 .. Last loop
+                  Buf (Len + Natural (K)) := Character'Val (Chunk (K));
+               end loop;
+               Len := Len + Natural (Last);
+            end;
+            exit when Ada.Strings.Fixed.Index (Buf (1 .. Len), Terminator) > 0;
+         end loop;
+         return Complete;
+      end Read_Head;
+
+      --  Exactly Want bytes past the head: whatever arrived with it
+      --  first, then reads bounded by the per-read timeout AND the
+      --  connection budget.  A peer that declared more than it sends is
+      --  a quiet drop (Ok False); one that sent MORE than it declared
+      --  has the excess ignored -- Connection: close, nothing is ever
+      --  pipelined.
+      procedure Read_Body
+        (Want : Natural; Payload : out String; Ok : out Boolean)
+      is
+         Have   : constant Natural := Len - Head_Last;
+         Filled : Natural := Natural'Min (Have, Want);
+      begin
+         Payload := [others => ' '];
+         Ok := False;
+         Payload (Payload'First .. Payload'First + Filled - 1) :=
+           Buf (Head_Last + 1 .. Head_Last + Filled);
+         while Filled < Want loop
+            declare
+               Chunk : Ada.Streams.Stream_Element_Array (1 .. 1_024);
+               Last  : Ada.Streams.Stream_Element_Offset;
+               Take  : Natural;
+            begin
+               begin
+                  Receive_Socket (Sock, Chunk, Last);
+               exception
+                  when Socket_Error =>
+                     return;
+               end;
+               if Last < Chunk'First then
+                  return;
+               end if;
+               if Ada.Calendar.Clock > Deadline then
+                  return;
+               end if;
+               Take := Natural'Min (Natural (Last), Want - Filled);
+               for K in 1 .. Take loop
+                  Payload (Payload'First + Filled + K - 1) :=
+                    Character'Val
+                      (Chunk (Ada.Streams.Stream_Element_Offset (K)));
+               end loop;
+               Filled := Filled + Take;
+            end;
+         end loop;
+         Ok := True;
+      end Read_Body;
+
+      procedure Dispatch (R : Request) is
+      begin
+         if R.Length_Refused then
+            Respond (Too_Large_413, "text/plain", "body too large");
+         elsif not R.Well_Formed then
             Respond (Bad_Request_400, "text/plain", "bad request");
-         elsif R.Method /= Get then
-            Respond (Not_Allowed_405, "text/plain", "GET only");
+         elsif R.Method = Other then
+            Respond (Not_Allowed_405, "text/plain", "method not allowed");
+         elsif R.Method = Get and then R.Content_Length > 0 then
+            --  Only a POST may spend the budget on a body.
+            Respond (Bad_Request_400, "text/plain", "no body on GET");
+         elsif R.Method = Post and then R.Content_Length = 0 then
+            --  A chunked or lengthless POST is refused up front.
+            Respond (Bad_Request_400, "text/plain", "length required");
+         elsif R.Method = Get then
+            Handle (R, "", Respond'Access);
          else
-            Handle (Target_Of (R), Respond'Access);
+            declare
+               Payload : String (1 .. R.Content_Length);
+               Ok      : Boolean;
+            begin
+               Read_Body (R.Content_Length, Payload, Ok);
+               if Ok then
+                  Handle (R, Payload, Respond'Access);
+               end if;
+            end;
          end if;
-      end;
+      end Dispatch;
+
+   begin
+      case Read_Head is
+         when Dropped     =>
+            return;
+
+         when Over_Budget =>
+            Respond (Bad_Request_400, "text/plain", "bad request");
+            return;
+
+         when Complete    =>
+            null;
+      end case;
+
+      Head_Last := Ada.Strings.Fixed.Index (Buf (1 .. Len), Terminator) + 3;
+      Dispatch (Parse_Request (Buf (1 .. Len)));
    end Serve_One;
 
    Listener : Socket_Type;

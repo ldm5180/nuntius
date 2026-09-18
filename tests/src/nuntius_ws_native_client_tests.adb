@@ -40,22 +40,68 @@ package body Nuntius_Ws_Native_Client_Tests is
         Idle_Limit      => 2.0,
         Poll_Slice      => 0.25);
 
+   --  A burst into a ring FAR too shallow for it: Drain decodes every
+   --  frame already buffered, so all Flood_Count land on a ring holding
+   --  four and the rest are refused -- with the connection KEPT, which
+   --  is the right reaction and exactly why the loss has to be counted.
+   --  Nothing else about it is observable.
+   --
+   --  The bound is roomy on purpose.  The read accumulator is
+   --  Max_Frame_Bytes + a header, and the whole burst has to FIT it in
+   --  one go for the drop to be deterministic: at a tight bound only a
+   --  couple of frames are decodable per Drain and a shallow ring is
+   --  never actually overrun.
+   Flood_Count : constant := 40;
+
+   package Flood_Ws is new
+     Nuntius.Ws.Native_Client
+       (Ring_Depth      => 4,
+        Max_Frame_Bytes => 256,
+        Idle_Limit      => 2.0,
+        Poll_Slice      => 0.25);
+
+   --  One text frame whose payload is past this instance's bound.
+   Over_Bytes : constant := 100;
+
+   package Over_Ws is new
+     Nuntius.Ws.Native_Client
+       (Ring_Depth      => 4,
+        Max_Frame_Bytes => 32,
+        Idle_Limit      => 2.0,
+        Poll_Slice      => 0.25);
+
+   --  Receive_For's idle persistence: Idle_Limit 1.0 over 0.25 slices,
+   --  so four silent slices kill the connection even when they are
+   --  spread over four separate patient calls.  A per-call idle clock
+   --  would never fire and a silent partition would never be detected.
+   package Idle_Ws is new
+     Nuntius.Ws.Native_Client
+       (Ring_Depth      => 8,
+        Max_Frame_Bytes => 256,
+        Idle_Limit      => 1.0,
+        Poll_Slice      => 0.25);
+
    ------------------------------------------------------------------
    --  Offline cases
    ------------------------------------------------------------------
 
    procedure Test_Unconnected (T : in out AUnit.Test_Cases.Test_Case'Class) is
       pragma Unreferenced (T);
-      C    : Ws.Client;
-      Buf  : String (1 .. 64);
-      Last : Natural;
-      Ok   : Boolean;
+      C     : Ws.Client;
+      Buf   : String (1 .. 64);
+      Last  : Natural;
+      Ok    : Boolean;
+      Timed : Boolean;
    begin
       Ws.Send_Text (C, "hello", Ok);
       Assert (not Ok, "send before any dial reports Ok = False");
       Ws.Receive (C, Buf, Last, Ok);
       Assert (not Ok, "receive before any dial reports Ok = False");
       Assert (Last = 0, "receive before any dial delivers nothing");
+      Ws.Receive_For (C, Buf, Last, 0.1, Ok, Timed);
+      Assert
+        (not Ok and then not Timed,
+         "a timed receive before any dial is dead, never a timeout");
       Ws.Close (C);  --  harmless no-op
    end Test_Unconnected;
 
@@ -245,6 +291,177 @@ package body Nuntius_Ws_Native_Client_Tests is
       Ws.Close (C);
       Assert (Result.Pong_Seen, "client auto-ponged the server's ping");
    end Test_Loopback;
+
+   ------------------------------------------------------------------
+   --  Receive_For: the patience-bounded receive
+   ------------------------------------------------------------------
+
+   --  Serve the upgrade, hold the line silent for Hold, then (when
+   --  Speak) send one "late" text frame, and hang up with a close
+   --  frame either way.
+   task type Quiet_Server is
+      entry Serve (Listener : Socket_Type; Hold : Duration; Speak : Boolean);
+   end Quiet_Server;
+
+   task body Quiet_Server is
+      Listen : Socket_Type;
+      Peer   : Socket_Type;
+      From   : Sock_Addr_Type;
+      Quiet  : Duration;
+      Chatty : Boolean;
+   begin
+      accept Serve
+        (Listener : Socket_Type; Hold : Duration; Speak : Boolean)
+      do
+         Listen := Listener;
+         Quiet := Hold;
+         Chatty := Speak;
+      end Serve;
+      Accept_Socket (Listen, Peer, From);
+
+      declare
+         Buf  : Stream_Element_Array (1 .. 1_024);
+         Last : Stream_Element_Offset;
+         Seen : Natural := 0;
+      begin
+         loop
+            Receive_Socket (Peer, Buf, Last);
+            exit when Last < Buf'First;
+            Seen := Seen + Natural (Last);
+            exit when Seen >= 4;
+         end loop;
+      end;
+
+      Send_Bytes
+        (Peer,
+         [Character'Pos ('H'),
+          Character'Pos ('T'),
+          Character'Pos ('T'),
+          Character'Pos ('P'),
+          Character'Pos ('/'),
+          Character'Pos ('1'),
+          Character'Pos ('.'),
+          Character'Pos ('1'),
+          Character'Pos (' '),
+          Character'Pos ('1'),
+          Character'Pos ('0'),
+          Character'Pos ('1'),
+          13,
+          10,
+          13,
+          10]);
+
+      delay Quiet;
+
+      if Chatty then
+         Send_Bytes
+           (Peer,
+            [16#81#,
+             16#04#,
+             Character'Pos ('l'),
+             Character'Pos ('a'),
+             Character'Pos ('t'),
+             Character'Pos ('e')]);
+      end if;
+
+      Send_Bytes (Peer, [16#88#, 16#00#]);
+      Close_Socket (Peer);
+      Close_Socket (Listen);
+   exception
+      when others =>
+         null;  --  the client hanging up early is fine
+   end Quiet_Server;
+
+   function Serve_Quiet
+     (Srv : access Quiet_Server; Hold : Duration; Speak : Boolean)
+      return Port_Type
+   is
+      Listen : Socket_Type;
+      Addr   : Sock_Addr_Type;
+   begin
+      Create_Socket (Listen);
+      Set_Socket_Option (Listen, Socket_Level, (Reuse_Address, True));
+      Bind_Socket (Listen, (Family_Inet, Loopback_Inet_Addr, 0));
+      Listen_Socket (Listen);
+      Addr := Get_Socket_Name (Listen);
+      Srv.Serve (Listen, Hold, Speak);
+      return Addr.Port;
+   end Serve_Quiet;
+
+   function Loop_Url (Port : Port_Type) return String
+   is ("ws://127.0.0.1:" & Trim (Port_Type'Image (Port), Both) & "/v1");
+
+   --  A quiet quarter second is a HEALTHY timeout; the frame that
+   --  arrives later is delivered by a patient call on the same
+   --  connection; the peer's close is dead, never a timeout.
+   procedure Test_Receive_For_Quiet
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Srv   : aliased Quiet_Server;
+      C     : Ws.Client;
+      Buf   : String (1 .. 256);
+      Last  : Natural;
+      Ok    : Boolean;
+      Timed : Boolean;
+   begin
+      Ws.Connect (C, Loop_Url (Serve_Quiet (Srv'Access, 1.5, True)), Ok);
+      Assert (Ok, "handshake completes over loopback");
+
+      Ws.Receive_For (C, Buf, Last, 0.25, Ok, Timed);
+      Assert
+        (Ok and then Timed and then Last = 0,
+         "a quiet quarter-second is a healthy timeout, not a death");
+
+      Ws.Receive_For (C, Buf, Last, 5.0, Ok, Timed);
+      Assert
+        (Ok and then not Timed and then Buf (1 .. Last) = "late",
+         "the late frame is delivered inside a patient wait");
+
+      Ws.Receive_For (C, Buf, Last, 5.0, Ok, Timed);
+      Assert
+        (not Ok and then not Timed, "peer close is dead, never a timeout");
+      Ws.Close (C);
+   end Test_Receive_For_Quiet;
+
+   --  The idle clock persists ACROSS calls: at Idle_Limit 1.0 over
+   --  0.25 slices, four silent quarter-second calls report the
+   --  connection dead, with healthy timeouts before it.  A per-call
+   --  clock would time out politely forever and no silent partition
+   --  would ever be detected.
+   procedure Test_Receive_For_Idle_Persists
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Srv      : aliased Quiet_Server;
+      C        : Idle_Ws.Client;
+      Buf      : String (1 .. 256);
+      Last     : Natural;
+      Ok       : Boolean;
+      Timed    : Boolean;
+      Timeouts : Natural := 0;
+      Calls    : Natural := 0;
+   begin
+      Idle_Ws.Connect (C, Loop_Url (Serve_Quiet (Srv'Access, 2.5, False)), Ok);
+      Assert (Ok, "handshake completes over loopback");
+
+      for K in 1 .. 10 loop
+         Idle_Ws.Receive_For (C, Buf, Last, 0.25, Ok, Timed);
+         Calls := K;
+         exit when not Ok;
+         Timeouts := Timeouts + (if Timed then 1 else 0);
+      end loop;
+
+      Assert (not Ok, "total silence past the idle limit is still dead");
+      Assert
+        (Timeouts >= 2,
+         "with healthy timeouts before it; saw" & Timeouts'Image);
+      Assert
+        (Calls <= 8,
+         "the idle clock persisted across the calls; died on call"
+         & Calls'Image);
+      Idle_Ws.Close (C);
+   end Test_Receive_For_Idle_Persists;
 
    --  Serve the upgrade, then fire Burst_Count tiny text frames back to
    --  back (payload = the frame's index) with no delay, so they land in the
@@ -458,6 +675,250 @@ package body Nuntius_Ws_Native_Client_Tests is
       Ws.Close (C);
    end Test_Slow_Handshake;
 
+   --  Burst_Server's shape at Flood_Count, so the whole burst lands in
+   --  the handshake read's surplus and one Drain sees all of it.
+   task type Flood_Server is
+      entry Serve (Listener : Socket_Type);
+   end Flood_Server;
+
+   task body Flood_Server is
+      Listen : Socket_Type;
+      Peer   : Socket_Type;
+      From   : Sock_Addr_Type;
+   begin
+      accept Serve (Listener : Socket_Type) do
+         Listen := Listener;
+      end Serve;
+      Accept_Socket (Listen, Peer, From);
+
+      declare
+         Buf  : Stream_Element_Array (1 .. 1_024);
+         Last : Stream_Element_Offset;
+         Seen : Natural := 0;
+      begin
+         loop
+            Receive_Socket (Peer, Buf, Last);
+            exit when Last < Buf'First;
+            Seen := Seen + Natural (Last);
+            exit when Seen >= 4;
+         end loop;
+      end;
+
+      declare
+         Head : constant Stream_Element_Array :=
+           [Character'Pos ('H'),
+            Character'Pos ('T'),
+            Character'Pos ('T'),
+            Character'Pos ('P'),
+            Character'Pos ('/'),
+            Character'Pos ('1'),
+            Character'Pos ('.'),
+            Character'Pos ('1'),
+            Character'Pos (' '),
+            Character'Pos ('1'),
+            Character'Pos ('0'),
+            Character'Pos ('1'),
+            13,
+            10,
+            13,
+            10];
+         Blob :
+           Stream_Element_Array
+             (1 .. Head'Length + Stream_Element_Offset (Flood_Count * 3));
+      begin
+         Blob (1 .. Head'Length) := Head;
+         for I in 0 .. Flood_Count - 1 loop
+            Blob (Head'Length + Stream_Element_Offset (I * 3 + 1)) := 16#81#;
+            Blob (Head'Length + Stream_Element_Offset (I * 3 + 2)) := 16#01#;
+            Blob (Head'Length + Stream_Element_Offset (I * 3 + 3)) :=
+              Stream_Element (I);
+         end loop;
+         Send_Bytes (Peer, Blob);
+      end;
+
+      Close_Socket (Peer);
+      Close_Socket (Listen);
+   exception
+      when others =>
+         Close_Socket (Peer);
+   end Flood_Server;
+
+   --  Serves the upgrade and then ONE text frame too big for the
+   --  client's bound.  Payload under 126 bytes, so the length rides the
+   --  second byte directly and no extended-length field is involved --
+   --  the bound is what is under test, not the header codec.
+   task type Big_Server is
+      entry Serve (Listener : Socket_Type);
+   end Big_Server;
+
+   task body Big_Server is
+      Listen : Socket_Type;
+      Peer   : Socket_Type;
+      From   : Sock_Addr_Type;
+   begin
+      accept Serve (Listener : Socket_Type) do
+         Listen := Listener;
+      end Serve;
+      Accept_Socket (Listen, Peer, From);
+
+      declare
+         Buf  : Stream_Element_Array (1 .. 1_024);
+         Last : Stream_Element_Offset;
+         Seen : Natural := 0;
+      begin
+         loop
+            Receive_Socket (Peer, Buf, Last);
+            exit when Last < Buf'First;
+            Seen := Seen + Natural (Last);
+            exit when Seen >= 4;
+         end loop;
+      end;
+
+      declare
+         Head : constant Stream_Element_Array :=
+           [Character'Pos ('H'),
+            Character'Pos ('T'),
+            Character'Pos ('T'),
+            Character'Pos ('P'),
+            Character'Pos ('/'),
+            Character'Pos ('1'),
+            Character'Pos ('.'),
+            Character'Pos ('1'),
+            Character'Pos (' '),
+            Character'Pos ('1'),
+            Character'Pos ('0'),
+            Character'Pos ('1'),
+            13,
+            10,
+            13,
+            10];
+         Blob :
+           Stream_Element_Array
+             (1 .. Head'Length + 2 + Stream_Element_Offset (Over_Bytes));
+      begin
+         Blob (1 .. Head'Length) := Head;
+         Blob (Head'Length + 1) := 16#81#;               --  FIN | text
+         Blob (Head'Length + 2) := Stream_Element (Over_Bytes);
+         for K in 1 .. Stream_Element_Offset (Over_Bytes) loop
+            Blob (Head'Length + 2 + K) := Character'Pos ('x');
+         end loop;
+         Send_Bytes (Peer, Blob);
+      end;
+
+      Close_Socket (Peer);
+      Close_Socket (Listen);
+   exception
+      when others =>
+         Close_Socket (Peer);
+   end Big_Server;
+
+   --  AN OVERSIZED FRAME KILLS THE CONNECTION AND MUST SAY SO.
+   --
+   --  It is discarded before any Receive could see it, so a consumer
+   --  measuring frame sizes for itself -- which is the whole point of a
+   --  provisional Max_Frame_Bytes -- can never see the frame that
+   --  mattered.  Its high-water reads LOW at exactly the moment the
+   --  bound is the problem, and the only symptom is a reconnect loop
+   --  with no stated reason.  So the adapter reports the count AND the
+   --  length, because the length is the number the bound has to be
+   --  raised past.
+   procedure Test_Oversized_Is_Reported
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Listen : Socket_Type;
+      Srv    : Big_Server;
+      C      : Over_Ws.Client;
+      Buf    : String (1 .. 256);
+      Last   : Natural;
+      Ok     : Boolean;
+      Port   : Port_Type;
+   begin
+      Create_Socket (Listen);
+      Set_Socket_Option (Listen, Socket_Level, (Reuse_Address, True));
+      Bind_Socket (Listen, (Family_Inet, Loopback_Inet_Addr, 0));
+      Listen_Socket (Listen);
+      Port := Get_Socket_Name (Listen).Port;
+
+      Srv.Serve (Listen);
+
+      Over_Ws.Connect
+        (C,
+         "ws://127.0.0.1:" & Trim (Port_Type'Image (Port), Both) & "/o",
+         Ok);
+      Assert (Ok, "oversize: handshake completes");
+
+      Over_Ws.Receive (C, Buf, Last, Ok);
+      Assert (not Ok, "an oversized frame is reconnect-worthy");
+
+      Assert
+        (Over_Ws.Losses (C).Oversized = 1,
+         "and it is COUNTED -- otherwise the death is indistinguishable"
+         & " from any other dropped connection; got"
+         & Over_Ws.Losses (C).Oversized'Image);
+      Assert
+        (Over_Ws.Losses (C).Largest = Over_Bytes,
+         "with the length the bound has to be raised past; wanted"
+         & Natural'Image (Over_Bytes)
+         & ", got"
+         & Over_Ws.Losses (C).Largest'Image);
+
+      Over_Ws.Close (C);
+   end Test_Oversized_Is_Reported;
+
+   --  A FULL RING DROPS FRAMES AND KEEPS STREAMING, WHICH IS WORSE TO
+   --  DIAGNOSE THAN A RECONNECT.
+   --
+   --  Keeping the connection is right: a transient burst must not cost
+   --  a redial, which would lose the whole backlog and add a gap.  But
+   --  Push's Ok is the only signal the refusal gives, and a consumer
+   --  never sees it -- so without a tally the data is simply missing
+   --  and the feed looks quiet.
+   procedure Test_Ring_Overflow_Is_Reported
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Listen : Socket_Type;
+      Srv    : Flood_Server;
+      C      : Flood_Ws.Client;
+      Buf    : String (1 .. 32);
+      Last   : Natural;
+      Ok     : Boolean;
+      Port   : Port_Type;
+   begin
+      Create_Socket (Listen);
+      Set_Socket_Option (Listen, Socket_Level, (Reuse_Address, True));
+      Bind_Socket (Listen, (Family_Inet, Loopback_Inet_Addr, 0));
+      Listen_Socket (Listen);
+      Port := Get_Socket_Name (Listen).Port;
+
+      Srv.Serve (Listen);
+
+      Flood_Ws.Connect
+        (C,
+         "ws://127.0.0.1:" & Trim (Port_Type'Image (Port), Both) & "/f",
+         Ok);
+      Assert (Ok, "flood: handshake completes");
+
+      --  One pop is enough: the whole burst arrived in a single recv and
+      --  one Drain decoded all of it, so the refusals have already
+      --  happened.
+      Flood_Ws.Receive (C, Buf, Last, Ok);
+      Assert (Ok, "the frames that DID fit are still delivered");
+
+      Assert
+        (Flood_Ws.Losses (C).Dropped > 0,
+         "and the ones the ring could not hold are counted rather than"
+         & " vanishing; got"
+         & Flood_Ws.Losses (C).Dropped'Image);
+      Assert
+        (Flood_Ws.Losses (C).Oversized = 0,
+         "a full ring is not an oversized frame -- they call for"
+         & " opposite fixes and must not share a counter");
+
+      Flood_Ws.Close (C);
+   end Test_Ring_Overflow_Is_Reported;
+
    overriding
    procedure Register_Tests (T : in out Test) is
    begin
@@ -475,8 +936,24 @@ package body Nuntius_Ws_Native_Client_Tests is
          "burst of many frames in one read: none dropped, in order");
       Register_Routine
         (T,
+         Test_Oversized_Is_Reported'Access,
+         "an oversized frame is counted, with its length");
+      Register_Routine
+        (T,
+         Test_Ring_Overflow_Is_Reported'Access,
+         "frames the ring could not hold are counted");
+      Register_Routine
+        (T,
          Test_Slow_Handshake'Access,
          "a handshake reply slower than one poll slice still connects");
+      Register_Routine
+        (T,
+         Test_Receive_For_Quiet'Access,
+         "Receive_For: a quiet wait times out healthy, a frame delivers");
+      Register_Routine
+        (T,
+         Test_Receive_For_Idle_Persists'Access,
+         "Receive_For: the idle clock persists across patient calls");
    end Register_Tests;
 
    overriding

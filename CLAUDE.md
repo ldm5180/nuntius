@@ -42,13 +42,18 @@ websocket port always means "reconnect-worthy".
   return now?" check) and `Nuntius.Fd_Wake` (`eventfd(2)` wake token,
   Linux-only) — the non-blocking companions to `Nuntius.Http.Fetch.Wait`'s
   blocking multi-fd poll. And the serving side: `Nuntius.Web.Server`, a
-  generic serial GET server (poll-accept — never parks in accept(2) —
-  Connection: close, 2 s IO timeouts, quiet probe drops) whose routing,
-  logging, and stop/sleep all arrive as formals (`Handle` is called once
-  per well-formed GET; `On_Listening` reports the bound port so tests
-  bind port 0), plus `Nuntius.Web.Files` (capped whole-file read with
+  generic serial GET/POST server (poll-accept — never parks in accept(2)
+  — Connection: close, 2 s per-read IO timeouts, a whole-connection
+  budget `Connection_Seconds` on top of them so a dribble cannot hold
+  the loop, quiet probe drops) whose routing, logging, and stop/sleep
+  all arrive as formals (`Handle` is called once per well-formed GET or
+  POST with the parsed `Request` and the body — at most
+  `Max_Body_Bytes`, and always `""` on a GET, since a GET carrying one
+  is answered 400; `On_Listening` reports the bound port so tests bind
+  port 0), plus `Nuntius.Web.Files` (capped whole-file read with
   distinct Read_Ok/Missing/Oversized outcomes — oversized is refused
-  whole, never truncated).
+  whole, never truncated).  The loop is no longer assumed to be
+  loopback-only.
 - `tests/` — AUnit suite (`test_nuntius.gpr`, driver `test_runner.adb`).
 - `example/` — standalone demo mains (`http_get`, `ws_listen`) showing the
   consumer story end to end; built in CI, run manually against real

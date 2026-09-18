@@ -42,7 +42,9 @@ generic
 package Nuntius.Ws.Aws_Client
 is
 
-   type Client is limited new Nuntius.Ws.Transport with private;
+   type Client is limited
+     new Nuntius.Ws.Transport
+     and Nuntius.Ws.Diagnosable with private;
 
    overriding
    procedure Connect (Self : in out Client; URL : String; Ok : out Boolean);
@@ -59,7 +61,25 @@ is
       Ok   : out Boolean);
 
    overriding
+   procedure Receive_For
+     (Self      : in out Client;
+      Into      : out String;
+      Last      : out Natural;
+      Patience  : Duration;
+      Ok        : out Boolean;
+      Timed_Out : out Boolean);
+
+   overriding
    procedure Close (Self : in out Client);
+
+   overriding
+   function Losses (Self : Client) return Nuntius.Ws.Loss_Report;
+
+   --  Why the last dial failed ("" when it did not): the exception
+   --  Connect absorbed into Ok = False, kept readable.  See
+   --  Nuntius.Ws.Diagnosable.
+   overriding
+   function Last_Error (Self : Client) return String;
 
 private
 
@@ -86,6 +106,8 @@ private
    --  exactly once, and a pristine object's field is null (a safe no-op).
    type Socket_Access is access Socket_Type;
 
+   Max_Error : constant := 512;
+
    overriding
    procedure On_Message (Socket : in out Socket_Type; Message : String);
 
@@ -95,9 +117,25 @@ private
    overriding
    procedure On_Error (Socket : in out Socket_Type; Message : String);
 
-   type Client is limited new Nuntius.Ws.Transport with record
+   --  The stored dial failure, bounded so the record needs no heap: an
+   --  exception message is a sentence, and one that is not fits at 512.
+   type Client is limited new Nuntius.Ws.Transport and Nuntius.Ws.Diagnosable
+   with record
       Sock      : Socket_Access;
       Connected : Boolean := False;
+      Err       : String (1 .. Max_Error) := [others => ' '];
+      Err_Last  : Natural := 0;
+
+      --  The idle clock lives on the CLIENT, not in a Receive local:
+      --  Receive_For returns early on a healthy timeout, and a per-call
+      --  clock would reset with every patient call -- a silent
+      --  partition would then time out politely forever and never be
+      --  reported dead.  Reset by any traffic, and by a fresh dial.
+      Idle : Duration := 0.0;
    end record;
+
+   overriding
+   function Last_Error (Self : Client) return String
+   is (Self.Err (1 .. Self.Err_Last));
 
 end Nuntius.Ws.Aws_Client;

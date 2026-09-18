@@ -29,6 +29,16 @@ package body Nuntius.Ws.Native_Client is
    -- Execute --
    -------------
 
+   --  Saturating, like the fifo's own tally: a diagnostic must never
+   --  take the connection down.
+   procedure Note_Oversized (Ctx : in out Context; Length : Natural) is
+   begin
+      if Ctx.Over_N < Natural'Last then
+         Ctx.Over_N := Ctx.Over_N + 1;
+      end if;
+      Ctx.Over_Max := Natural'Max (Ctx.Over_Max, Length);
+   end Note_Oversized;
+
    procedure Execute (A : Action_Kind; Ctx : in out Context; Evt : Event) is
       pragma Unreferenced (Evt);
       Ok : Boolean;
@@ -113,6 +123,8 @@ package body Nuntius.Ws.Native_Client is
    procedure Reset (Ctx : in out Context) is
    begin
       Frames.Clear (Ctx.Inbound);
+      Ctx.Over_N := 0;
+      Ctx.Over_Max := 0;
       Ctx.In_Len := 0;
       Ctx.Asm_Len := 0;
       Ctx.Dead := False;
@@ -196,6 +208,7 @@ package body Nuntius.Ws.Native_Client is
 
          when Op_Continuation =>
             if Self.Ctx.Asm_Len > Max_Frame_Bytes - Self.Ctx.In_Len then
+               Note_Oversized (Self.Ctx, Self.Ctx.Asm_Len + Self.Ctx.In_Len);
                Post (Self, E_Oversized);
             else
                Post (Self, (if H.Fin then E_End else E_Cont));
@@ -252,6 +265,7 @@ package body Nuntius.Ws.Native_Client is
 
                when Ready     =>
                   if H.Payload_Bytes > Max_Frame_Bytes then
+                     Note_Oversized (Self.Ctx, H.Payload_Bytes);
                      Post (Self, E_Oversized);
                      exit;
                   elsif Self.Accum_Len < H.Header_Bytes + H.Payload_Bytes then
@@ -331,19 +345,27 @@ package body Nuntius.Ws.Native_Client is
    -- Receive --
    -------------
 
-   overriding
-   procedure Receive
-     (Self : in out Client;
-      Into : out String;
-      Last : out Natural;
-      Ok   : out Boolean)
+   --  The one wait loop under both receives.  Bounded False waits until
+   --  a frame, death, or the idle limit; Bounded True additionally
+   --  returns a healthy Timed_Out once Patience has elapsed.  The idle
+   --  clock is Self.Idle -- persisted across calls, reset by traffic --
+   --  so a run of patient calls still detects a silent partition.
+   procedure Wait_Frame
+     (Self      : in out Client;
+      Into      : out String;
+      Last      : out Natural;
+      Bounded   : Boolean;
+      Patience  : Duration;
+      Ok        : out Boolean;
+      Timed_Out : out Boolean)
    is
-      Idle  : Duration := 0.0;
-      Got   : Boolean;
-      Fatal : Boolean;
+      Waited : Duration := 0.0;
+      Got    : Boolean;
+      Fatal  : Boolean;
    begin
       Last := 0;
       Ok := False;
+      Timed_Out := False;
       if not Self.Connected then
          return;
       end if;
@@ -351,10 +373,17 @@ package body Nuntius.Ws.Native_Client is
       loop
          if Frames.Count (Self.Ctx.Inbound) > 0 then
             Frames.Pop (Self.Ctx.Inbound, Into, Last, Ok);
+            Self.Idle := 0.0;
             return;
          end if;
 
          if Self.Ctx.Dead then
+            return;
+         end if;
+
+         if Bounded and then Waited >= Patience then
+            Ok := True;
+            Timed_Out := True;
             return;
          end if;
 
@@ -369,17 +398,49 @@ package body Nuntius.Ws.Native_Client is
                return;
             end if;
             if Got then
-               Idle := 0.0;
+               Self.Idle := 0.0;
             else
-               Idle := Idle + Poll_Slice;
-               if Idle >= Idle_Limit then
+               Self.Idle := Self.Idle + Poll_Slice;
+               Waited := Waited + Poll_Slice;
+               if Self.Idle >= Idle_Limit then
                   Post (Self, E_Idle);
                   return;
                end if;
             end if;
          end if;
       end loop;
+   end Wait_Frame;
+
+   overriding
+   procedure Receive
+     (Self : in out Client;
+      Into : out String;
+      Last : out Natural;
+      Ok   : out Boolean)
+   is
+      Unused : Boolean;
+   begin
+      Wait_Frame
+        (Self,
+         Into,
+         Last,
+         Bounded   => False,
+         Patience  => 0.0,
+         Ok        => Ok,
+         Timed_Out => Unused);
    end Receive;
+
+   overriding
+   procedure Receive_For
+     (Self      : in out Client;
+      Into      : out String;
+      Last      : out Natural;
+      Patience  : Duration;
+      Ok        : out Boolean;
+      Timed_Out : out Boolean) is
+   begin
+      Wait_Frame (Self, Into, Last, True, Patience, Ok, Timed_Out);
+   end Receive_For;
 
    ---------------
    -- Parse_Url --
@@ -619,6 +680,7 @@ package body Nuntius.Ws.Native_Client is
       Reset (Self.Ctx);
       Self.State := S_Open;
       Self.Accum_Len := 0;
+      Self.Idle := 0.0;
 
       Parse_Url (URL, Host, Path, Port, POk);
       if not POk then
@@ -696,5 +758,28 @@ package body Nuntius.Ws.Native_Client is
       Self.Connected := False;
       Teardown (Self);
    end Close;
+
+   ------------
+   -- Losses --
+   ------------
+
+   overriding
+   function Losses (Self : Client) return Nuntius.Ws.Loss_Report is
+      --  Two sources, and both are real.  The fifo tallies what it
+      --  refused once a frame reached it; the read machine kills the
+      --  connection on an oversized header before the frame is ever
+      --  assembled, so those never reach the fifo at all.
+      Long : constant Natural := Frames.Refused_Long (Self.Ctx.Inbound);
+   begin
+      return
+        (Dropped   => Frames.Refused_Full (Self.Ctx.Inbound),
+         Oversized =>
+           (if Self.Ctx.Over_N > Natural'Last - Long
+            then Natural'Last
+            else Self.Ctx.Over_N + Long),
+         Largest   =>
+           Natural'Max
+             (Self.Ctx.Over_Max, Frames.Longest_Refused (Self.Ctx.Inbound)));
+   end Losses;
 
 end Nuntius.Ws.Native_Client;

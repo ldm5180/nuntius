@@ -2,9 +2,10 @@ with AUnit.Assertions; use AUnit.Assertions;
 
 with Nuntius.Web;
 
---  The pure serving primitives: the HTTP/1.1 request-LINE parser and
---  the byte-exact response head.  Routing is the consumer's policy and
---  is deliberately absent here.
+--  The pure serving primitives: the HTTP/1.1 request-LINE parser, the
+--  header lines it interprets (length, type, bearer, forwarded-for),
+--  and the byte-exact response head.  Routing is the consumer's policy
+--  and is deliberately absent here.
 
 package body Nuntius_Web_Tests is
 
@@ -25,9 +26,10 @@ package body Nuntius_Web_Tests is
       Assert (Nuntius.Web.Target_Of (R) = "/", "the target is /");
    end Test_Parse_Get_Root;
 
-   --  POST is WELL-FORMED with Method = Other: the server answers 405
-   --  (method not allowed), never 400 (bad request).
-   procedure Test_Parse_Post_Is_Other
+   --  POST is its own method now: the server reads a body for it and
+   --  hands it to Handle.  PUT is what stays Other, and what the loop
+   --  answers 405.
+   procedure Test_Parse_Post_Is_Post
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
@@ -35,9 +37,9 @@ package body Nuntius_Web_Tests is
         Nuntius.Web.Parse_Request ("POST /api/stats HTTP/1.1" & CRLF & CRLF);
    begin
       Assert (R.Well_Formed, "POST still parses");
-      Assert (R.Method = Nuntius.Web.Other, "the method is Other");
+      Assert (R.Method = Nuntius.Web.Post, "the method is Post");
       Assert (Nuntius.Web.Target_Of (R) = "/api/stats", "the target survives");
-   end Test_Parse_Post_Is_Other;
+   end Test_Parse_Post_Is_Post;
 
    procedure Test_Parse_Rejects_Garbage
      (T : in out AUnit.Test_Cases.Test_Case'Class)
@@ -87,6 +89,237 @@ package body Nuntius_Web_Tests is
       Assert (Nuntius.Web.Target_Of (R) = Target, "the target survives whole");
    end Test_Parse_Long_Oauth_Target;
 
+   --  The header block, which the parser now walks as far as the first
+   --  empty line: the body may itself hold CRLFs and even a
+   --  Content-Length, and must never be read as a header.
+   procedure Test_Parse_Post_Headers
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      use Nuntius.Web;
+      Over_Long : constant String (1 .. Max_Bearer + 1) := [others => 'a'];
+      R         : Request;
+   begin
+      R :=
+        Parse_Request
+          ("POST /api/close HTTP/1.1"
+           & CRLF
+           & "Host: 127.0.0.1:9321"
+           & CRLF
+           & "content-type: Application/JSON; charset=utf-8"
+           & CRLF
+           & "Content-Length: 15"
+           & CRLF
+           & CRLF
+           & "{""scope"":""all""}");
+      Assert (R.Well_Formed and then R.Method = Post, "POST parses as Post");
+      Assert (R.Content_Length = 15, "the length is read");
+      Assert (R.Json_Body, "application/json with parameters counts");
+      Assert
+        (Bearer_Of (R) = "" and then Forwarded_For_Of (R) = "",
+         "no token, no forwarded text");
+
+      R :=
+        Parse_Request
+          ("GET / HTTP/1.1" & CRLF & "Host: LocalHost" & CRLF & CRLF);
+      Assert
+        (R.Content_Length = 0 and then not R.Json_Body,
+         "absent headers read as none");
+
+      R :=
+        Parse_Request
+          ("GET /api/positions HTTP/1.1"
+           & CRLF
+           & "authorization: bearer   abc.DEF-123_~+/="
+           & CRLF
+           & CRLF);
+      Assert
+        (Bearer_Of (R) = "abc.DEF-123_~+/=",
+         "the scheme is case-insensitive, extra SP skipped, the token "
+         & "verbatim");
+
+      R :=
+        Parse_Request
+          ("GET / HTTP/1.1" & CRLF & "Authorization: Basic abc" & CRLF & CRLF);
+      Assert (Bearer_Of (R) = "", "another scheme is no bearer");
+
+      R :=
+        Parse_Request
+          ("GET / HTTP/1.1" & CRLF & "Authorization: Bearer" & CRLF & CRLF);
+      Assert (Bearer_Of (R) = "", "a bare scheme is no bearer");
+
+      R :=
+        Parse_Request
+          ("GET / HTTP/1.1"
+           & CRLF
+           & "Authorization: Bearer "
+           & Over_Long
+           & CRLF
+           & CRLF);
+      Assert
+        (Bearer_Of (R) = "",
+         "past Max_Bearer the token is absent, not truncated");
+
+      R :=
+        Parse_Request
+          ("GET / HTTP/1.1"
+           & CRLF
+           & "X-Forwarded-For: 203.0.113.7, 100.64.0.1"
+           & CRLF
+           & CRLF);
+      Assert
+        (Forwarded_For_Of (R) = "203.0.113.7, 100.64.0.1",
+         "the forwarded chain is kept verbatim");
+
+      R :=
+        Parse_Request
+          ("GET / HTTP/1.1"
+           & CRLF
+           & "X-Forwarded-For: a"
+           & ASCII.ESC
+           & "b"
+           & CRLF
+           & CRLF);
+      Assert (Forwarded_For_Of (R) = "", "a control character empties it");
+
+      R :=
+        Parse_Request
+          ("POST / HTTP/1.1" & CRLF & "Content-Length: 4097" & CRLF & CRLF);
+      Assert
+        (not R.Well_Formed and then R.Length_Refused,
+         "4097 is refused as too large");
+
+      R :=
+        Parse_Request
+          ("POST / HTTP/1.1" & CRLF & "Content-Length: 99999" & CRLF & CRLF);
+      Assert
+        (not R.Well_Formed and then R.Length_Refused,
+         "a five-digit run is too large on sight");
+
+      R :=
+        Parse_Request
+          ("POST / HTTP/1.1" & CRLF & "Content-Length: 12a" & CRLF & CRLF);
+      Assert
+        (not R.Well_Formed and then not R.Length_Refused,
+         "12a is a bad request");
+
+      R := Parse_Request ("PUT / HTTP/1.1" & CRLF & CRLF);
+      Assert (R.Well_Formed and then R.Method = Other, "PUT is still Other");
+
+      R :=
+        Parse_Request
+          ("POST / HTTP/1.1"
+           & CRLF
+           & "Content-Length: 5"
+           & CRLF
+           & CRLF
+           & "a"
+           & CRLF
+           & "Content-Length: 9999"
+           & CRLF);
+      Assert
+        (R.Content_Length = 5,
+         "the walk stops at the empty line; the body is not a header");
+   end Test_Parse_Post_Headers;
+
+   --  A browser's usual head plus what a Tailscale proxy adds: about
+   --  1.2 KB, well inside the 4 KB budget, and the bearer still lands.
+   procedure Test_Parse_Proxied_Head
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      use Nuntius.Web;
+      Token : constant String (1 .. 64) := [others => 'f'];
+      Head  : constant String :=
+        "GET /api/positions HTTP/1.1"
+        & CRLF
+        & "Host: box.tail1234.ts.net"
+        & CRLF
+        & "User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X)"
+        & " AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5"
+        & " Mobile/15E148 Safari/604.1"
+        & CRLF
+        & "Accept: application/json, text/plain, */*"
+        & CRLF
+        & "Accept-Language: en-US,en;q=0.9"
+        & CRLF
+        & "Accept-Encoding: gzip, deflate, br"
+        & CRLF
+        & "Referer: https://box.tail1234.ts.net/"
+        & CRLF
+        & "Sec-Fetch-Dest: empty"
+        & CRLF
+        & "Sec-Fetch-Mode: cors"
+        & CRLF
+        & "Sec-Fetch-Site: same-origin"
+        & CRLF
+        & "Sec-Fetch-User: ?1"
+        & CRLF
+        & "Sec-CH-UA: ""Chromium"";v=""128"", ""Not;A=Brand"";v=""24"""
+        & CRLF
+        & "Sec-CH-UA-Mobile: ?1"
+        & CRLF
+        & "Sec-CH-UA-Platform: ""iOS"""
+        & CRLF
+        & "Authorization: Bearer "
+        & Token
+        & CRLF
+        & "Connection: keep-alive"
+        & CRLF
+        & "X-Forwarded-For: 203.0.113.7"
+        & CRLF
+        & "X-Forwarded-Proto: https"
+        & CRLF
+        & "X-Forwarded-Host: box.tail1234.ts.net"
+        & CRLF
+        & "Tailscale-Funnel-Request: ?1"
+        & CRLF
+        & CRLF;
+      R     : constant Request := Parse_Request (Head);
+   begin
+      Assert
+        (Head'Length <= Max_Request_Bytes,
+         "a proxied browser head fits the read budget with room to spare:"
+         & Natural'Image (Max_Request_Bytes - Head'Length)
+         & " bytes free");
+      Assert (R.Well_Formed and then R.Method = Get, "it parses as a GET");
+      Assert (Bearer_Of (R) = Token, "the bearer survives the crowd");
+      Assert
+        (Forwarded_For_Of (R) = "203.0.113.7",
+         "the proxy's forwarded address survives");
+   end Test_Parse_Proxied_Head;
+
+   procedure Test_New_Status_Lines
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      use Nuntius.Web;
+   begin
+      Assert (Status_Line (Accepted_202) = "202 Accepted", "202");
+      Assert (Status_Line (Unauthorized_401) = "401 Unauthorized", "401");
+      Assert (Status_Line (Forbidden_403) = "403 Forbidden", "403");
+      Assert (Status_Line (Conflict_409) = "409 Conflict", "409");
+      Assert (Status_Line (Too_Large_413) = "413 Content Too Large", "413");
+      Assert
+        (Status_Line (Unsupported_Media_415) = "415 Unsupported Media Type",
+         "415");
+   end Test_New_Status_Lines;
+
+   --  The compare the bearer guard rests on: every byte visited,
+   --  whatever the first difference.
+   procedure Test_Same_Text (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      pragma Unreferenced (T);
+      use Nuntius.Web;
+      A : constant String := "0123456789abcdef";
+      B : constant String := "0123456789abcdeF";
+      C : constant String := "F123456789abcdef";
+   begin
+      Assert (Same_Text (A, A), "a string equals itself");
+      Assert (not Same_Text (A, B), "a last-byte difference is a difference");
+      Assert (not Same_Text (A, C), "a first-byte difference too");
+      Assert (Same_Text ("", ""), "two empty strings are equal");
+   end Test_Same_Text;
+
    procedure Test_Response_Head_Golden
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
@@ -101,6 +334,10 @@ package body Nuntius_Web_Tests is
            & "Connection: close"
            & CRLF
            & "Cache-Control: no-store"
+           & CRLF
+           & "Content-Security-Policy: frame-ancestors 'none'"
+           & CRLF
+           & "X-Content-Type-Options: nosniff"
            & CRLF
            & "Content-Type: application/json"
            & CRLF
@@ -117,6 +354,10 @@ package body Nuntius_Web_Tests is
            & CRLF
            & "Cache-Control: no-store"
            & CRLF
+           & "Content-Security-Policy: frame-ancestors 'none'"
+           & CRLF
+           & "X-Content-Type-Options: nosniff"
+           & CRLF
            & "Content-Type: text/plain"
            & CRLF
            & "Content-Length: 8"
@@ -125,6 +366,36 @@ package body Nuntius_Web_Tests is
          "the exact 405 head, byte for byte");
    end Test_Response_Head_Golden;
 
+   --  RFC 9110 15.5.2 makes the challenge a MUST on a 401, and it is
+   --  the ONLY status that carries one.
+   procedure Test_Response_Head_401
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+   begin
+      Assert
+        (Nuntius.Web.Response_Head
+           (Nuntius.Web.Unauthorized_401, "text/plain", 12)
+         = "HTTP/1.1 401 Unauthorized"
+           & CRLF
+           & "WWW-Authenticate: Bearer realm=""dashboard"""
+           & CRLF
+           & "Connection: close"
+           & CRLF
+           & "Cache-Control: no-store"
+           & CRLF
+           & "Content-Security-Policy: frame-ancestors 'none'"
+           & CRLF
+           & "X-Content-Type-Options: nosniff"
+           & CRLF
+           & "Content-Type: text/plain"
+           & CRLF
+           & "Content-Length: 12"
+           & CRLF
+           & CRLF,
+         "the exact 401 head, challenge and all");
+   end Test_Response_Head_401;
+
    overriding
    procedure Register_Tests (T : in out Test) is
    begin
@@ -132,8 +403,8 @@ package body Nuntius_Web_Tests is
         (T, Test_Parse_Get_Root'Access, "Parse_Request accepts a plain GET");
       Register_Routine
         (T,
-         Test_Parse_Post_Is_Other'Access,
-         "Parse_Request types POST as Other (so the server can 405)");
+         Test_Parse_Post_Is_Post'Access,
+         "Parse_Request types POST as Post (PUT is what stays Other)");
       Register_Routine
         (T,
          Test_Parse_Rejects_Garbage'Access,
@@ -144,8 +415,24 @@ package body Nuntius_Web_Tests is
          "Parse_Request carries a full OAuth redirect target");
       Register_Routine
         (T,
+         Test_Parse_Post_Headers'Access,
+         "Parse_Request reads length, type, bearer and forwarded-for");
+      Register_Routine
+        (T,
+         Test_Parse_Proxied_Head'Access,
+         "Parse_Request handles a proxied browser head inside the budget");
+      Register_Routine
+        (T, Test_New_Status_Lines'Access, "Status_Line covers the new codes");
+      Register_Routine
+        (T, Test_Same_Text'Access, "Same_Text compares without an early exit");
+      Register_Routine
+        (T,
          Test_Response_Head_Golden'Access,
          "Response_Head emits the exact status head");
+      Register_Routine
+        (T,
+         Test_Response_Head_401'Access,
+         "Response_Head puts the challenge on a 401 only");
    end Register_Tests;
 
    overriding

@@ -1,10 +1,13 @@
 with AUnit.Assertions; use AUnit.Assertions;
 
+with Ada.Calendar; use Ada.Calendar;
+
 with Interfaces.C; use Interfaces.C;
 
 with System;
 
 with Nuntius.Fd_Poll;
+with Nuntius.Fd_Wake;
 
 --  The zero-timeout poll(2) shim, proven against the plainest readable
 --  descriptor there is: a pipe polls NOT-readable while empty and
@@ -62,6 +65,66 @@ package body Nuntius_Fd_Poll_Tests is
       end;
    end Test_Pipe_Readability;
 
+   --  Wait's three arms.  The bounds are deliberately generous: these
+   --  assert the SHAPE (returns at once / waits out the timeout), not a
+   --  scheduler latency, and CI boxes are slow and shared.
+
+   function Elapsed_Since (T : Time) return Duration
+   is (Clock - T);
+
+   procedure Test_Wait_Wakes_On_Signal
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+
+      Fd    : constant Integer := Nuntius.Fd_Wake.Create;
+      Start : Time;
+   begin
+      Assert (Fd >= 0, "the eventfd was created");
+      Nuntius.Fd_Wake.Signal (Fd);
+
+      Start := Clock;
+      Nuntius.Fd_Poll.Wait (Fd, 5_000);
+      Assert
+        (Elapsed_Since (Start) < 1.0,
+         "an already-signalled fd returns long before the timeout");
+
+      Nuntius.Fd_Wake.Close (Fd);
+   end Test_Wait_Wakes_On_Signal;
+
+   procedure Test_Wait_Times_Out (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+
+      Fd    : constant Integer := Nuntius.Fd_Wake.Create;
+      Start : Time;
+      Took  : Duration;
+   begin
+      Assert (Fd >= 0, "the eventfd was created");
+
+      Start := Clock;
+      Nuntius.Fd_Poll.Wait (Fd, 100);
+      Took := Elapsed_Since (Start);
+      Assert (Took >= 0.1, "an unsignalled fd waits out the timeout");
+      Assert (Took < 2.0, "and returns once it elapses");
+
+      Nuntius.Fd_Wake.Close (Fd);
+   end Test_Wait_Times_Out;
+
+   procedure Test_Wait_Unarmed_Sleeps
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+
+      Start : constant Time := Clock;
+      Took  : Duration;
+   begin
+      Nuntius.Fd_Poll.Wait (-1, 100);
+      Took := Elapsed_Since (Start);
+      Assert (Took >= 0.1, "an unarmed fd degrades to a plain sleep");
+      Assert (Took < 2.0, "of the timeout, and no longer");
+   end Test_Wait_Unarmed_Sleeps;
+
    overriding
    procedure Register_Tests (T : in out Test) is
    begin
@@ -69,6 +132,16 @@ package body Nuntius_Fd_Poll_Tests is
         (T,
          Test_Pipe_Readability'Access,
          "a pipe fd polls readable exactly when data waits");
+      Register_Routine
+        (T,
+         Test_Wait_Wakes_On_Signal'Access,
+         "Wait returns early on a signalled fd");
+      Register_Routine
+        (T, Test_Wait_Times_Out'Access, "Wait waits out an idle fd");
+      Register_Routine
+        (T,
+         Test_Wait_Unarmed_Sleeps'Access,
+         "Wait on an unarmed fd is a plain sleep");
    end Register_Tests;
 
    overriding

@@ -317,8 +317,12 @@ package body Nuntius.Http.Fetch.Curl is
       end case;
    end Set_Verb;
 
+   --  The registered identity goes on every transfer: libcurl sends no
+   --  User-Agent on its own, and an edge that refuses a request without
+   --  one answers before the application ever sees it.
    procedure Set_Headers (S : in out Slot; R : Request) is
    begin
+      Add_Header (S, "User-Agent", User_Agent);
       if Length (R.Authorization) > 0 then
          Add_Header (S, "Authorization", To_String (R.Authorization));
       end if;
