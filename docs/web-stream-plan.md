@@ -1,6 +1,20 @@
 # Plan: the dashboard streams over one websocket (`web-stream`)
 
-Status: PLAN, not started. Written 2026-09-18, iteration 3 of 3 (two
+Status: EXECUTED 2026-09-18 on branch `web-stream` in all three repos
+-- nuntius `9640aa24`, fructus `dd834603`, arb-ada `3382bb5`, pushed in
+that order, none merged.  The bases were the `web-*` tips as the
+paragraph below says, resolved to nuntius `origin/main` (a merge of
+`web-post` with a zero content diff) and fructus
+`origin/web-day-chart-rebased` (identical content to `web-day-chart`,
+on top of today's `main`).  Section 7 was walked against a running
+binary; item 7 (Tailscale Serve/Funnel) stays open -- see section 10.
+Two deliberate departures from the text: `Nuntius.Rfc6455.Decode`
+widened from a 16-bit length cap to `Natural'Last` on the 64-bit form,
+because WP-N4's own 70_000-byte round trip needs it; and
+`Fructus.Web.Auth.Note_Refusal` grew a `Label` so D21's "the two
+tasks' lines read apart" holds for the shared refusal line too.
+
+Written 2026-09-18, iteration 3 of 3 (two
 adversarial review rounds folded in: Ada-side reviewers compiled the
 sketches with the Alire GNAT 15.2.1 toolchain and measured them with
 fructus's `tools/fructustools/shape_check.py`; frontend reviewers ran
