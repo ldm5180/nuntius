@@ -22,6 +22,17 @@ is
          when others => Op_Continuation)
    with Static;
 
+   --  The other direction: the nibble an opcode goes out as.
+   function Opcode_Nibble (Op : Opcode) return Octet
+   is (case Op is
+         when Op_Continuation => 16#0#,
+         when Op_Text         => 16#1#,
+         when Op_Binary       => 16#2#,
+         when Op_Close        => 16#8#,
+         when Op_Ping         => 16#9#,
+         when Op_Pong         => 16#A#)
+   with Static;
+
    --  The 0/2/8-byte extended length field a 7-bit length prefix implies
    --  (RFC 6455 section 5.2): under 126 there is none, 126 means a 16-bit
    --  field follows, and 127 (any larger value here) means a 64-bit one.
@@ -75,18 +86,25 @@ is
               * 256
               + Natural (Buffer (Buffer'First + 3));
          elsif Ext_N = 8 then
-            --  We never accept a frame past 16 bits of length (the adapter
-            --  caps at Max_Frame_Bytes regardless), so a larger 64-bit
-            --  length is a violation rather than an overflow risk.
-            for I in 2 .. 7 loop
+            --  A length no Natural could hold is a violation, not a
+            --  number: the top four bytes and the 32nd bit must be
+            --  clear, which leaves exactly Natural'Last reachable.  The
+            --  adapter still caps at Max_Frame_Bytes on top of this.
+            for I in 2 .. 5 loop
                if Buffer (Buffer'First + I) /= 0 then
                   Result.Status := Invalid;
                   return Result;
                end if;
             end loop;
+            if Buffer (Buffer'First + 6) > 16#7F# then
+               Result.Status := Invalid;
+               return Result;
+            end if;
             Payload :=
-              Natural (Buffer (Buffer'First + 8))
-              * 256
+              Natural (Buffer (Buffer'First + 6))
+              * 16_777_216
+              + Natural (Buffer (Buffer'First + 7)) * 65_536
+              + Natural (Buffer (Buffer'First + 8)) * 256
               + Natural (Buffer (Buffer'First + 9));
          end if;
 
@@ -163,6 +181,42 @@ is
    -- Encode_Control --
    --------------------
 
+   -------------------
+   -- Server_Header --
+   -------------------
+
+   procedure Server_Header
+     (Op             : Opcode;
+      Payload_Length : Natural;
+      Into           : out Octets;
+      Last           : out Server_Header_Count)
+   is
+      N : constant Natural := Payload_Length;
+   begin
+      Into := [others => 0];
+      Into (1) := 16#80# or Opcode_Nibble (Op);
+      if N < 126 then
+         Into (2) := Octet (N);
+         Last := 2;
+      elsif N <= 65_535 then
+         Into (2) := 126;
+         Into (3) := Octet (N / 256);
+         Into (4) := Octet (N mod 256);
+         Last := 4;
+      else
+         --  Natural is 31-bit here, so the top four bytes are zero.
+         Into (2) := 127;
+         Into (7) := Octet (N / 16_777_216);
+         Into (8) := Octet ((N / 65_536) mod 256);
+         Into (9) := Octet ((N / 256) mod 256);
+         Into (10) := Octet (N mod 256);
+         Last := 10;
+      end if;
+   end Server_Header;
+
+   function Close_Payload (Code : Close_Code) return Octets
+   is [Octet (Code / 256), Octet (Code mod 256)];
+
    procedure Encode_Control
      (Op      : Opcode;
       Payload : Octets;
@@ -173,12 +227,7 @@ is
       N : constant Natural := Payload'Length;
    begin
       Into := [others => 0];
-      Into (1) :=
-        16#80#
-        or (case Op is
-              when Op_Close => 16#8#,
-              when Op_Ping  => 16#9#,
-              when others   => 16#A#);
+      Into (1) := 16#80# or Opcode_Nibble (Op);
       Into (2) := 16#80# or Octet (N);
       for I in 0 .. 3 loop
          Into (3 + I) := Mask (I);

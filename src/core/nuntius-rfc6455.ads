@@ -78,6 +78,32 @@ is
        and then Into'Length >= Text'Length + 8,
      Post => Last <= Into'Length;
 
+   Max_Server_Header : constant := 10;  --  2 + 8 extended length, no mask
+
+   subtype Server_Header_Count is Natural range 2 .. Max_Server_Header;
+
+   --  A single, final, UNMASKED frame header (RFC 6455 5.1: a server
+   --  must not mask).  The payload follows on the wire verbatim, which
+   --  is what lets a 5 MB document go out without being copied into an
+   --  octet buffer first.
+   procedure Server_Header
+     (Op             : Opcode;
+      Payload_Length : Natural;
+      Into           : out Octets;
+      Last           : out Server_Header_Count)
+   with
+     Pre =>
+       Into'First = 1
+       and then Into'Length >= Max_Server_Header
+       and then (if Op in Op_Close | Op_Ping | Op_Pong
+                 then Payload_Length <= 125);
+
+   subtype Close_Code is Natural range 1_000 .. 4_999;
+
+   --  The two-byte network-order status a close frame carries.
+   function Close_Payload (Code : Close_Code) return Octets
+   with Post => Close_Payload'Result'Length = 2;
+
    --  Build a masked control frame (Ping/Pong/Close; payload <= 125 bytes).
    procedure Encode_Control
      (Op      : Opcode;
