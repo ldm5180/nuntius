@@ -3,7 +3,8 @@
 --  consumer's socket loop (Nuntius.Web.Server) stays a thin transport.
 --  The parser reads the request LINE and the handful of header lines a
 --  serving loop has to act on (how long the body is, what it claims to
---  be, who is asking); everything else in the header block is skipped.
+--  be, who is asking, which codings it can read); everything else in
+--  the header block is skipped.
 --  ROUTING is absent by design -- which targets exist is the consumer's
 --  policy, applied in its Handle procedure.
 
@@ -50,33 +51,43 @@ is
       --  Length_Refused False).  A run longer than four digits is
       --  refused on its LENGTH alone and never evaluated, so nothing
       --  here can overflow.
-      Content_Length : Natural range 0 .. Max_Body_Bytes := 0;
-      Length_Refused : Boolean := False;
+      Content_Length  : Natural range 0 .. Max_Body_Bytes := 0;
+      Length_Refused  : Boolean := False;
       --  Content-Type names application/json (the value up to the
       --  first ';', trimmed, ASCII case-insensitive).
-      Json_Body      : Boolean := False;
+      Json_Body       : Boolean := False;
       --  Authorization: Bearer <token> (RFC 6750 2.1): the scheme word
       --  ASCII case-insensitive, one or more SP, then the token
       --  verbatim to the end of the value.  Absent, another scheme, an
       --  empty token, or one over Max_Bearer bytes leaves Bearer_Len 0
       --  -- an over-long token can never match and never overflows.
       --  A SECRET: never logged, never echoed, never 'Image'd.
-      Bearer         : String (1 .. Max_Bearer) := [others => ' '];
-      Bearer_Len     : Natural range 0 .. Max_Bearer := 0;
+      Bearer          : String (1 .. Max_Bearer) := [others => ' '];
+      Bearer_Len      : Natural range 0 .. Max_Bearer := 0;
       --  X-Forwarded-For, for the audit line only: the value verbatim
       --  when it is 1 .. Max_Forwarded bytes of visible ASCII (32 ..
       --  126); anything longer or with any other byte leaves it empty,
       --  so attacker-chosen text cannot carry a control character into
       --  the log.
-      Forwarded_For  : String (1 .. Max_Forwarded) := [others => ' '];
-      Forwarded_Len  : Natural range 0 .. Max_Forwarded := 0;
+      Forwarded_For   : String (1 .. Max_Forwarded) := [others => ' '];
+      Forwarded_Len   : Natural range 0 .. Max_Forwarded := 0;
       --  A websocket upgrade: a GET whose Upgrade, Connection,
       --  Sec-WebSocket-Version and Sec-WebSocket-Key headers all agree
       --  (RFC 6455 4.1).  Anything short of all four leaves this False
       --  and the request is the plain GET it was -- nothing is refused
       --  at the parser.  Ws_Key means something only when Upgrade does.
-      Upgrade        : Boolean := False;
-      Ws_Key         : String (1 .. Ws_Key_Length) := [others => ' '];
+      Upgrade         : Boolean := False;
+      Ws_Key          : String (1 .. Ws_Key_Length) := [others => ' '];
+      --  Accept-Encoding names gzip or the wildcard (RFC 9110 12.5.3):
+      --  some element, cut at its first ';' and trimmed, is "gzip"
+      --  (ASCII case-insensitive) or "*".  A weight is not read, so a
+      --  q=0 does not refuse; no browser sends one.
+      Accepts_Gzip    : Boolean := False;
+      --  Sec-WebSocket-Extensions holds a permessage-deflate offer this
+      --  side can answer (RFC 7692 7.1): no parameter but a bare or
+      --  8 .. 15 client_max_window_bits and the two no_context_takeover
+      --  flags.  An offer asking for a server window is skipped.
+      Deflate_Offered : Boolean := False;
    end record;
 
    function Target_Of (R : Request) return String
@@ -94,6 +105,19 @@ is
    --  The default for a consumer that takes no upgrades.
    function Never_Upgrade (Unused : Request) return Boolean
    is (False);
+
+   --  The smallest body worth a content coding.  Below it the gzip or
+   --  deflate framing costs more than it saves: a 78-byte JSON body
+   --  gzips to 106.
+   Min_Compress_Bytes : constant := 512;
+
+   function Worth_Packing (Length : Natural) return Boolean
+   is (Length >= Min_Compress_Bytes);
+
+   --  Whether a body of this media type shrinks under deflate: any
+   --  text/ type, JSON and SVG.  An image or font format is compressed
+   --  already, and deflate only grows it.
+   function Compressible (Content_Type : String) return Boolean;
 
    --  Parse the request LINE and the header block up to the first EMPTY
    --  line (never to Text'Last: a body may itself contain CRLF and even

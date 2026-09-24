@@ -140,6 +140,126 @@ is
       return Buf (Pos .. Buf'Last);
    end Decimal_Image;
 
+   function Is_Upgrade_Token (Element : String) return Boolean
+   is (Same_Ci (Element, "Upgrade"));
+
+   --  Whether some element of a Sep-separated list (RFC 9110 5.6.1),
+   --  trimmed, Matches.  One walk for every list a header carries: a
+   --  generic, so each list's test is a plain function and the proof
+   --  sees each instance whole.
+   generic
+      with function Matches (Element : String) return Boolean;
+   function Any_Element (Value : String; Sep : Character) return Boolean
+   with Pre => In_Text_Bounds (Value);
+
+   function Any_Element (Value : String; Sep : Character) return Boolean is
+      Pos : Natural := Value'First;
+      Cut : Natural;
+   begin
+      while Pos <= Value'Last loop
+         pragma Loop_Invariant (Pos in Value'First .. Value'Last);
+         pragma Loop_Variant (Increases => Pos);
+         Cut := Index_Of (Value (Pos .. Value'Last), Sep);
+         if Matches
+              (Trimmed
+                 (Value (Pos .. (if Cut = 0 then Value'Last else Cut - 1))))
+         then
+            return True;
+         end if;
+         exit when Cut = 0;
+         Pos := Cut + 1;
+      end loop;
+      return False;
+   end Any_Element;
+
+   --  The part of an element before its first ';', trimmed: a coding
+   --  without its weight, an extension without its parameters.
+   function Head_Of (Element : String) return String
+   is (Trimmed
+         (Element
+            (Element'First
+             .. (if Index_Of (Element, ';') = 0
+                 then Element'Last
+                 else Index_Of (Element, ';') - 1))))
+   with
+     Pre  => In_Text_Bounds (Element),
+     Post => In_Text_Bounds (Head_Of'Result);
+
+   function Is_Gzip_Coding (Element : String) return Boolean
+   is (Same_Ci (Head_Of (Element), "gzip") or else Head_Of (Element) = "*")
+   with Pre => In_Text_Bounds (Element);
+
+   --  RFC 7692 7.1.2.2: a client window of 8 .. 15 bits.
+   function Is_Window_Bits (Value : String) return Boolean
+   is (All_Digits (Value)
+       and then Value'Length <= 2
+       and then Digits_Value (Value) in 8 .. 15);
+
+   --  A permessage-deflate parameter this side can answer: the client's
+   --  window, bare or valued, and the two no_context_takeover flags,
+   --  which take no value.
+   function Is_Known_Param (Param : String) return Boolean
+   with Pre => In_Text_Bounds (Param);
+
+   function Is_Known_Param (Param : String) return Boolean is
+      Eq   : constant Natural := Index_Of (Param, '=');
+      Name : constant String :=
+        Trimmed
+          (Param (Param'First .. (if Eq = 0 then Param'Last else Eq - 1)));
+   begin
+      if Same_Ci (Name, "client_max_window_bits") then
+         return
+           Eq = 0
+           or else Is_Window_Bits (Trimmed (Param (Eq + 1 .. Param'Last)));
+      end if;
+      return
+        Eq = 0
+        and then (Same_Ci (Name, "client_no_context_takeover")
+                  or else Same_Ci (Name, "server_no_context_takeover"));
+   end Is_Known_Param;
+
+   function Is_Unknown_Param (Param : String) return Boolean
+   is (not Is_Known_Param (Param))
+   with Pre => In_Text_Bounds (Param);
+
+   function Any_Upgrade_Token is new Any_Element (Is_Upgrade_Token);
+   function Any_Gzip_Coding is new Any_Element (Is_Gzip_Coding);
+   function Any_Unknown_Param is new Any_Element (Is_Unknown_Param);
+
+   --  One offer: permessage-deflate, and no parameter this side cannot
+   --  answer.
+   function Is_Deflate_Offer (Offer : String) return Boolean
+   is (Same_Ci (Head_Of (Offer), "permessage-deflate")
+       and then (Index_Of (Offer, ';') = 0
+                 or else not Any_Unknown_Param
+                               (Offer
+                                  (Index_Of (Offer, ';') + 1 .. Offer'Last),
+                                ';')))
+   with Pre => In_Text_Bounds (Offer);
+
+   function Any_Deflate_Offer is new Any_Element (Is_Deflate_Offer);
+
+   function Media_Is (Content_Type, Media : String) return Boolean
+   is (Content_Type'Length >= Media'Length
+       and then Same_Ci
+                  (Content_Type
+                     (Content_Type'First
+                      .. Content_Type'First + (Media'Length - 1)),
+                   Media)
+       and then (Content_Type'Length = Media'Length
+                 or else Content_Type (Content_Type'First + Media'Length)
+                         in ';' | ' '))
+   with Pre => Media'Length > 0;
+
+   function Compressible (Content_Type : String) return Boolean
+   is ((Content_Type'Length > 5
+        and then Same_Ci
+                   (Content_Type
+                      (Content_Type'First .. Content_Type'First + 4),
+                    "text/"))
+       or else Media_Is (Content_Type, "application/json")
+       or else Media_Is (Content_Type, "image/svg+xml"));
+
    function Parse_Request (Text : String) return Request is
       R : Request;
 
@@ -159,19 +279,6 @@ is
       Wants_Ws     : Boolean := False;
       Version_13   : Boolean := False;
       Seen_Key     : Boolean := False;
-
-      --  Content-Type, as far as the first ';' (the parameters are a
-      --  charset, never the media type).
-      function Is_Json (Value : String) return Boolean
-      with Pre => In_Text_Bounds (Value)
-      is
-         Semi : constant Natural := Index_Of (Value, ';');
-         Last : constant Natural :=
-           (if Semi = 0 then Value'Last else Semi - 1);
-      begin
-         return
-           Same_Ci (Trimmed (Value (Value'First .. Last)), "application/json");
-      end Is_Json;
 
       procedure Read_Length (Value : String) is
       begin
@@ -233,24 +340,10 @@ is
       procedure Read_Connection (Value : String)
       with Pre => In_Text_Bounds (Value)
       is
-         Pos   : Natural := Value'First;
-         Comma : Natural;
       begin
-         while Pos <= Value'Last loop
-            pragma Loop_Invariant (Pos in Value'First .. Value'Last);
-            pragma Loop_Variant (Increases => Pos);
-            Comma := Index_Of (Value (Pos .. Value'Last), ',');
-            declare
-               Last : constant Natural :=
-                 (if Comma = 0 then Value'Last else Comma - 1);
-            begin
-               if Same_Ci (Trimmed (Value (Pos .. Last)), "Upgrade") then
-                  Conn_Upgrade := True;
-               end if;
-            end;
-            exit when Comma = 0;
-            Pos := Comma + 1;
-         end loop;
+         if Any_Upgrade_Token (Value, ',') then
+            Conn_Upgrade := True;
+         end if;
       end Read_Connection;
 
       procedure Read_Ws_Key (Value : String) is
@@ -278,7 +371,7 @@ is
             if Same_Ci (Name, "Content-Length") then
                Read_Length (Value);
             elsif Same_Ci (Name, "Content-Type") then
-               R.Json_Body := Is_Json (Value);
+               R.Json_Body := Same_Ci (Head_Of (Value), "application/json");
             elsif Same_Ci (Name, "Authorization") then
                Read_Bearer (Value);
             elsif Same_Ci (Name, "X-Forwarded-For") then
@@ -291,6 +384,12 @@ is
                Version_13 := Value = "13";
             elsif Same_Ci (Name, "Sec-WebSocket-Key") then
                Read_Ws_Key (Value);
+            elsif Same_Ci (Name, "Accept-Encoding") then
+               R.Accepts_Gzip :=
+                 R.Accepts_Gzip or else Any_Gzip_Coding (Value, ',');
+            elsif Same_Ci (Name, "Sec-WebSocket-Extensions") then
+               R.Deflate_Offered :=
+                 R.Deflate_Offered or else Any_Deflate_Offer (Value, ',');
             end if;
          end;
       end Read_Header;

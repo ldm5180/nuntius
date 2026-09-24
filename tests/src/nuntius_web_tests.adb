@@ -565,6 +565,137 @@ package body Nuntius_Web_Tests is
       end loop;
    end Test_426_Head_Carries_Upgrade;
 
+   --  A GET carrying one Accept-Encoding value, for the coding tests.
+   function Accepting (Value : String) return Nuntius.Web.Request
+   is (Nuntius.Web.Parse_Request
+         ("GET /assets/index.js HTTP/1.1"
+          & CRLF
+          & "Host: x"
+          & CRLF
+          & "Accept-Encoding: "
+          & Value
+          & CRLF
+          & CRLF));
+
+   --  RFC 9110 12.5.3: a comma-separated list of codings, each with an
+   --  optional weight.  gzip anywhere in it, or the wildcard, is enough.
+   procedure Test_Accept_Encoding_Parsed
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+   begin
+      Assert
+        (Accepting ("gzip, deflate, br").Accepts_Gzip,
+         "a browser's list names gzip");
+      Assert (not Accepting ("br").Accepts_Gzip, "brotli alone is not gzip");
+      Assert
+        (Accepting ("GZIP;q=0.5").Accepts_Gzip,
+         "case-insensitive, and the weight is cut off");
+      Assert (Accepting ("br, *").Accepts_Gzip, "the wildcard accepts gzip");
+      Assert
+        (not Accepting ("x-gzip-ish").Accepts_Gzip,
+         "a coding that only contains gzip is not gzip");
+      Assert
+        (not Nuntius.Web.Parse_Request
+               ("GET / HTTP/1.1" & CRLF & "Host: x" & CRLF & CRLF)
+               .Accepts_Gzip,
+         "no header, identity");
+      Assert
+        (Accepting ("gzip").Well_Formed,
+         "the header never decides well-formedness");
+   end Test_Accept_Encoding_Parsed;
+
+   --  An upgrade request carrying one Sec-WebSocket-Extensions value.
+   function Offering (Value : String) return Nuntius.Web.Request
+   is (Nuntius.Web.Parse_Request
+         ("GET /api/stream HTTP/1.1"
+          & CRLF
+          & "Connection: Upgrade"
+          & CRLF
+          & "Upgrade: websocket"
+          & CRLF
+          & "Sec-WebSocket-Version: 13"
+          & CRLF
+          & "Sec-WebSocket-Key: "
+          & Key_24
+          & CRLF
+          & "Sec-WebSocket-Extensions: "
+          & Value
+          & CRLF
+          & CRLF));
+
+   Offering_None : constant Nuntius.Web.Request :=
+     Nuntius.Web.Parse_Request (Head ("Upgrade", "websocket", "13", Key_24));
+
+   --  RFC 7692 7.1: a list of offers, each a name and parameters.  The
+   --  offer taken is permessage-deflate with no parameter but the three
+   --  a server may answer without honouring a window of its own.
+   procedure Test_Deflate_Offer_Parsed
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+   begin
+      Assert
+        (Offering ("permessage-deflate; client_max_window_bits")
+           .Deflate_Offered,
+         "Chrome's offer");
+      Assert (Offering ("permessage-deflate").Deflate_Offered, "Firefox's");
+      Assert
+        (Offering ("permessage-deflate; client_max_window_bits=10")
+           .Deflate_Offered,
+         "a client window with a value");
+      Assert
+        (Offering
+           ("permessage-deflate;server_no_context_takeover;"
+            & " client_no_context_takeover")
+           .Deflate_Offered,
+         "both no-context parameters");
+      Assert
+        (not Offering ("permessage-deflate; server_max_window_bits=10")
+               .Deflate_Offered,
+         "a server window is not honoured");
+      Assert
+        (Offering
+           ("permessage-deflate; server_max_window_bits=10,"
+            & " permessage-deflate")
+           .Deflate_Offered,
+         "the second offer is taken when the first is not");
+      Assert
+        (not Offering ("permessage-deflate; client_max_window_bits=16")
+               .Deflate_Offered,
+         "a client window past 15");
+      Assert
+        (not Offering ("permessage-deflate; client_no_context_takeover=1")
+               .Deflate_Offered,
+         "a no-context parameter takes no value");
+      Assert
+        (not Offering ("x-webkit-deflate-frame").Deflate_Offered,
+         "another extension");
+      Assert (not Offering_None.Deflate_Offered, "no header, no offer");
+      Assert
+        (Offering ("permessage-deflate").Upgrade,
+         "the offer does not change the upgrade verdict");
+   end Test_Deflate_Offer_Parsed;
+
+   --  D4: a coding pays on text, never on an image format that is
+   --  already compressed, and never under the floor.
+   procedure Test_Compressible_And_Floor
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      use Nuntius.Web;
+   begin
+      Assert (Compressible ("text/javascript; charset=utf-8"), "javascript");
+      Assert (Compressible ("text/plain"), "plain text");
+      Assert (Compressible ("application/json"), "json");
+      Assert (Compressible ("Application/JSON; charset=utf-8"), "json, cased");
+      Assert (Compressible ("image/svg+xml"), "svg is text");
+      Assert (not Compressible ("image/png"), "png is compressed already");
+      Assert (not Compressible ("font/woff2"), "so is woff2");
+      Assert (not Worth_Packing (511), "under the floor");
+      Assert (Worth_Packing (512), "the floor is 512 bytes");
+   end Test_Compressible_And_Floor;
+
    overriding
    procedure Register_Tests (T : in out Test) is
    begin
@@ -620,6 +751,18 @@ package body Nuntius_Web_Tests is
         (T,
          Test_426_Head_Carries_Upgrade'Access,
          "Response_Head puts the upgrade offer on a 426 only");
+      Register_Routine
+        (T,
+         Test_Accept_Encoding_Parsed'Access,
+         "Parse_Request records whether gzip is accepted");
+      Register_Routine
+        (T,
+         Test_Deflate_Offer_Parsed'Access,
+         "Parse_Request records a permessage-deflate offer it can take");
+      Register_Routine
+        (T,
+         Test_Compressible_And_Floor'Access,
+         "Compressible and Worth_Packing decide when a coding pays");
    end Register_Tests;
 
    overriding
