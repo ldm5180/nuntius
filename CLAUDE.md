@@ -53,7 +53,11 @@ websocket port always means "reconnect-worthy".
   port 0), plus `Nuntius.Web.Files` (capped whole-file read with
   distinct Read_Ok/Missing/Oversized outcomes — oversized is refused
   whole, never truncated).  The loop is no longer assumed to be
-  loopback-only.
+  loopback-only.  `Nuntius.Deflate` is the one unit that calls zlib
+  (the binding the aws crate bundles): a gzip member for
+  `Content-Encoding` and permessage-deflate's pack/unpack of one
+  message, never raising -- a failure is an empty result or a verdict
+  and the caller sends plain.
 - `tests/` — AUnit suite (`test_nuntius.gpr`, driver `test_runner.adb`).
 - `example/` — standalone demo mains (`http_get`, `ws_listen`) showing the
   consumer story end to end; built in CI, run manually against real

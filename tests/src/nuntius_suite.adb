@@ -1,5 +1,6 @@
 with AUnit.Test_Cases;
 
+with Nuntius_Deflate_Tests;
 with Nuntius_Fd_Poll_Tests;
 with Nuntius_Fd_Wake_Tests;
 with Nuntius_Frame_Fifo_Tests;
@@ -40,6 +41,7 @@ package body Nuntius_Suite is
       Add (new Nuntius_Web_Handshake_Tests.Test);
       Add (new Nuntius_Web_Server_Tests.Test);
       Add (new Nuntius_Ws_Peer_Tests.Test);
+      Add (new Nuntius_Deflate_Tests.Test);
       return Result;
    end Suite;
 
