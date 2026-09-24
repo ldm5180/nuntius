@@ -1,4 +1,5 @@
 with Nuntius;
+with Nuntius.Codings;
 with Nuntius.Frame_Fifo;
 with Nuntius.Rfc6455;
 with Nuntius.Web;

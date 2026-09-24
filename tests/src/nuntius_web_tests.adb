@@ -1,5 +1,6 @@
 with AUnit.Assertions; use AUnit.Assertions;
 
+with Nuntius.Codings;
 with Nuntius.Web;
 
 --  The pure serving primitives: the HTTP/1.1 request-LINE parser, the
@@ -696,6 +697,76 @@ package body Nuntius_Web_Tests is
       Assert (Worth_Packing (512), "the floor is 512 bytes");
    end Test_Compressible_And_Floor;
 
+   --  A gzip body adds exactly two lines after the fixed ones, and
+   --  nothing else moves (the identity golden above stays byte-exact).
+   procedure Test_Response_Head_Gzip_Golden
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+   begin
+      Assert
+        (Nuntius.Web.Response_Head
+           (Nuntius.Web.Ok_200, "application/json", 965, Nuntius.Codings.Gzip)
+         = "HTTP/1.1 200 OK"
+           & CRLF
+           & "Connection: close"
+           & CRLF
+           & "Cache-Control: no-store"
+           & CRLF
+           & "Content-Security-Policy: frame-ancestors 'none'"
+           & CRLF
+           & "X-Content-Type-Options: nosniff"
+           & CRLF
+           & "Content-Encoding: gzip"
+           & CRLF
+           & "Vary: Accept-Encoding"
+           & CRLF
+           & "Content-Type: application/json"
+           & CRLF
+           & "Content-Length: 965"
+           & CRLF
+           & CRLF,
+         "the exact gzip head, byte for byte");
+      Assert
+        (Nuntius.Web.Response_Head
+           (Nuntius.Web.Ok_200, "text/plain", 2, Nuntius.Codings.Identity)
+         = Nuntius.Web.Response_Head (Nuntius.Web.Ok_200, "text/plain", 2),
+         "identity is the default, and today's head");
+   end Test_Response_Head_Gzip_Golden;
+
+   --  RFC 7692 7.1.1: the answer names both no-context parameters,
+   --  whatever the offer said, so no deflate state outlives a message.
+   procedure Test_Upgrade_Head_Deflated
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Text : constant String :=
+        Nuntius.Web.Upgrade_Head
+          ("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", Nuntius.Codings.Deflated);
+   begin
+      Assert
+        (Text
+         = "HTTP/1.1 101 Switching Protocols"
+           & CRLF
+           & "Upgrade: websocket"
+           & CRLF
+           & "Connection: Upgrade"
+           & CRLF
+           & "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+           & CRLF
+           & "Sec-WebSocket-Extensions: permessage-deflate;"
+           & " server_no_context_takeover; client_no_context_takeover"
+           & CRLF
+           & CRLF,
+         "the exact deflate 101, byte for byte");
+      Assert (Text'Length = 231, "231 bytes on the wire");
+      Assert
+        (Nuntius.Web.Upgrade_Head
+           ("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", Nuntius.Codings.Plain)'Length
+         = 129,
+         "plain is the default's 129 bytes");
+   end Test_Upgrade_Head_Deflated;
+
    overriding
    procedure Register_Tests (T : in out Test) is
    begin
@@ -763,6 +834,14 @@ package body Nuntius_Web_Tests is
         (T,
          Test_Compressible_And_Floor'Access,
          "Compressible and Worth_Packing decide when a coding pays");
+      Register_Routine
+        (T,
+         Test_Response_Head_Gzip_Golden'Access,
+         "Response_Head adds Content-Encoding and Vary for a gzip body");
+      Register_Routine
+        (T,
+         Test_Upgrade_Head_Deflated'Access,
+         "Upgrade_Head answers a deflate offer with no context takeover");
    end Register_Tests;
 
    overriding

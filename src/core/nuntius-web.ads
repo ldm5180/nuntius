@@ -8,9 +8,14 @@
 --  ROUTING is absent by design -- which targets exist is the consumer's
 --  policy, applied in its Handle procedure.
 
+with Nuntius.Codings;
+
 package Nuntius.Web
   with SPARK_Mode
 is
+
+   use type Codings.Content_Coding;
+   use type Codings.Message_Coding;
 
    --  One request's read budget: request line + headers.  Localhost
    --  cookies from other dev servers could inflate headers; the cap is
@@ -172,24 +177,52 @@ is
          when Upgrade_Required_426  => "426 Upgrade Required",
          when Unavailable_503       => "503 Service Unavailable");
 
+   --  The two lines a gzip body adds (RFC 9110 8.4, 12.5.5).  Vary goes
+   --  only on the gzip variant: every response is no-store, so there is
+   --  no cache to warn, and the identity head stays byte-for-byte what
+   --  it was.
+   Gzip_Encoding : constant String := "Content-Encoding: gzip";
+   Gzip_Vary     : constant String := "Vary: Accept-Encoding";
+
    --  "HTTP/1.1 <code> <reason>" CRLF, then on a 401 ONLY the
    --  Challenge CRLF and on a 426 ONLY the Upgrade_Offer CRLF, then
    --  "Connection: close" CRLF "Cache-Control:
    --  no-store" CRLF "Content-Security-Policy: frame-ancestors 'none'"
-   --  CRLF "X-Content-Type-Options: nosniff" CRLF "Content-Type: <..>"
+   --  CRLF "X-Content-Type-Options: nosniff" CRLF, on a Gzip body the
+   --  Gzip_Encoding CRLF and Gzip_Vary CRLF, then "Content-Type: <..>"
    --  CRLF "Content-Length: <n>" CRLF CRLF -- the body follows
    --  verbatim.
    function Response_Head
-     (S : Status; Content_Type : String; Content_Length : Natural)
+     (S              : Status;
+      Content_Type   : String;
+      Content_Length : Natural;
+      Coding         : Codings.Content_Coding := Codings.Identity)
       return String
    with Pre => Content_Type'Length in 1 .. 64;
 
+   --  The extension line of a 101 that took a deflate offer (RFC 7692
+   --  7.1.1): both no_context_takeover parameters, whatever the offer
+   --  said, so every message is packed and unpacked from a fresh
+   --  window and one packed buffer serves every client.
+   Deflate_Extension : constant String :=
+     "Sec-WebSocket-Extensions: permessage-deflate;"
+     & " server_no_context_takeover; client_no_context_takeover";
+
    --  "HTTP/1.1 101 Switching Protocols" CRLF "Upgrade: websocket"
-   --  CRLF "Connection: Upgrade" CRLF "Sec-WebSocket-Accept: <a>" CRLF
-   --  CRLF.  No body follows: the socket is a websocket from here.
-   function Upgrade_Head (Accept_Key : String) return String
+   --  CRLF "Connection: Upgrade" CRLF "Sec-WebSocket-Accept: <a>" CRLF,
+   --  on a Deflated socket the Deflate_Extension CRLF, then CRLF.  No
+   --  body follows: the socket is a websocket from here.
+   function Upgrade_Head
+     (Accept_Key : String; Coding : Codings.Message_Coding := Codings.Plain)
+      return String
    with
      Pre  => Accept_Key'Length = Accept_Length,
-     Post => Upgrade_Head'Result'Length = 101 + Accept_Length;
+     Post =>
+       Upgrade_Head'Result'Length
+       = 101
+         + Accept_Length
+         + (if Coding = Codings.Deflated
+            then Deflate_Extension'Length + 2
+            else 0);
 
 end Nuntius.Web;

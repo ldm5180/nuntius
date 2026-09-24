@@ -504,14 +504,25 @@ is
 
    pragma Style_Checks (On);
 
+   --  The longest fixed header line a head carries, with room.
+   Max_Header_Line : constant := 128;
+
+   --  A header line, or nothing: the heads' optional lines.
+   function Line_If (Present : Boolean; Line : String) return String
+   is (if Present then Line & CRLF else "")
+   with Pre => Line'First = 1 and then Line'Length <= Max_Header_Line;
+
    function Response_Head
-     (S : Status; Content_Type : String; Content_Length : Natural)
+     (S              : Status;
+      Content_Type   : String;
+      Content_Length : Natural;
+      Coding         : Codings.Content_Coding := Codings.Identity)
       return String
    is ("HTTP/1.1 "
        & Status_Line (S)
        & CRLF
-       & (if S = Unauthorized_401 then Challenge & CRLF else "")
-       & (if S = Upgrade_Required_426 then Upgrade_Offer & CRLF else "")
+       & Line_If (S = Unauthorized_401, Challenge)
+       & Line_If (S = Upgrade_Required_426, Upgrade_Offer)
        & "Connection: close"
        & CRLF
        & "Cache-Control: no-store"
@@ -520,6 +531,8 @@ is
        & CRLF
        & "X-Content-Type-Options: nosniff"
        & CRLF
+       & Line_If (Coding = Codings.Gzip, Gzip_Encoding)
+       & Line_If (Coding = Codings.Gzip, Gzip_Vary)
        & "Content-Type: "
        & Content_Type
        & CRLF
@@ -528,7 +541,9 @@ is
        & CRLF
        & CRLF);
 
-   function Upgrade_Head (Accept_Key : String) return String
+   function Upgrade_Head
+     (Accept_Key : String; Coding : Codings.Message_Coding := Codings.Plain)
+      return String
    is ("HTTP/1.1 101 Switching Protocols"
        & CRLF
        & Upgrade_Offer
@@ -538,6 +553,7 @@ is
        & "Sec-WebSocket-Accept: "
        & Accept_Key
        & CRLF
+       & Line_If (Coding = Codings.Deflated, Deflate_Extension)
        & CRLF);
 
 end Nuntius.Web;
