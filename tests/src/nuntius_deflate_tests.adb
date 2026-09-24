@@ -1,11 +1,9 @@
 with AUnit.Assertions; use AUnit.Assertions;
 
-with Ada.Streams; use Ada.Streams;
-
-with ZLib;
-
 with Nuntius.Deflate;
 with Nuntius.Rfc6455; use Nuntius.Rfc6455;
+
+with Test_Payloads; use Test_Payloads;
 
 --  The zlib wrapper: a gzip member a browser can read, and the
 --  permessage-deflate pack and unpack of one message.  The gzip side is
@@ -15,53 +13,6 @@ with Nuntius.Rfc6455; use Nuntius.Rfc6455;
 package body Nuntius_Deflate_Tests is
 
    use AUnit.Test_Cases.Registration;
-
-   --  JSON-shaped, repetitive text: what the dashboard actually sends.
-   function Json_Like (Rows : Positive) return String is
-      Row : constant String := "{""sym"":""SPXW"",""bid"":1.25,""ask"":1.35},";
-      S   : String (1 .. Rows * Row'Length);
-   begin
-      for K in 0 .. Rows - 1 loop
-         S (K * Row'Length + 1 .. (K + 1) * Row'Length) := Row;
-      end loop;
-      return S;
-   end Json_Like;
-
-   --  Bytes no deflate can shrink, from a fixed LCG so the test is
-   --  stable.
-   function Noise (Length : Natural) return String is
-      S     : String (1 .. Length);
-      State : Natural := 12_345;
-   begin
-      for C of S loop
-         State := (State * 1_103 + 12_345) mod 65_536;
-         C := Character'Val (State / 256);
-      end loop;
-      return S;
-   end Noise;
-
-   --  zlib's own reading of a gzip member.
-   function Gunzip (Member : String; Max : Positive) return String is
-      Filter  : ZLib.Filter_Type;
-      In_Data : Stream_Element_Array (1 .. Member'Length);
-      Output  : Stream_Element_Array (1 .. Stream_Element_Offset (Max));
-      In_Last : Stream_Element_Offset;
-      Last    : Stream_Element_Offset;
-   begin
-      for K in In_Data'Range loop
-         In_Data (K) :=
-           Character'Pos (Member (Member'First + Natural (K) - 1));
-      end loop;
-      ZLib.Inflate_Init (Filter, Header => ZLib.GZip);
-      ZLib.Translate (Filter, In_Data, In_Last, Output, Last, ZLib.Finish);
-      Assert (ZLib.Stream_End (Filter), "the member is complete");
-      ZLib.Close (Filter, Ignore_Error => True);
-      return S : String (1 .. Natural (Last)) do
-         for K in S'Range loop
-            S (K) := Character'Val (Output (Stream_Element_Offset (K)));
-         end loop;
-      end return;
-   end Gunzip;
 
    procedure Test_Gzip_Round_Trips
      (T : in out AUnit.Test_Cases.Test_Case'Class)

@@ -16,6 +16,7 @@ is
 
    use type Codings.Content_Coding;
    use type Codings.Message_Coding;
+   use type Codings.Policy;
 
    --  One request's read budget: request line + headers.  Localhost
    --  cookies from other dev servers could inflate headers; the cap is
@@ -123,6 +124,31 @@ is
    --  text/ type, JSON and SVG.  An image or font format is compressed
    --  already, and deflate only grows it.
    function Compressible (Content_Type : String) return Boolean;
+
+   --  The coding a response goes out in: gzip when the request takes
+   --  it, the policy applies codings, the type shrinks and the body is
+   --  worth it; identity otherwise.
+   function Response_Coding
+     (Accepts_Gzip : Boolean;
+      Policy       : Codings.Policy;
+      Content_Type : String;
+      Length       : Natural) return Codings.Content_Coding
+   is (if Accepts_Gzip
+         and then Policy = Codings.Compress_When_Offered
+         and then Compressible (Content_Type)
+         and then Worth_Packing (Length)
+       then Codings.Gzip
+       else Codings.Identity);
+
+   --  The coding an upgraded socket agrees: permessage-deflate when the
+   --  request offered one this side can answer and the policy applies
+   --  codings; plain otherwise.
+   function Upgrade_Coding
+     (Deflate_Offered : Boolean; Policy : Codings.Policy)
+      return Codings.Message_Coding
+   is (if Deflate_Offered and then Policy = Codings.Compress_When_Offered
+       then Codings.Deflated
+       else Codings.Plain);
 
    --  Parse the request LINE and the header block up to the first EMPTY
    --  line (never to Text'Last: a body may itself contain CRLF and even

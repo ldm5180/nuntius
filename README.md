@@ -45,15 +45,27 @@ shipped here.
   upgrade is the one connection the serial loop does not keep: when the
   consumer's `Accepts_Upgrade` takes it, the loop writes the 101
   (`Web.Upgrade_Head` over `Web.Handshake.Accept_Key`) and hands the
-  socket to `Adopt`, never touching it again.
+  socket to `Adopt`, never touching it again.  With `Coding_Policy =>
+  Compress_When_Offered` the loop takes the codings a client offers:
+  a text-like body past 512 bytes goes out gzipped
+  (`Content-Encoding: gzip`, `Vary: Accept-Encoding`), and a
+  `permessage-deflate` offer is answered with no context takeover
+  either way, the verdict passed to `Adopt`.  The default applies none,
+  byte for byte as before.
 - **`Nuntius.Ws.Peer`** — the server side of a websocket, for whoever
   adopted one: sends UNMASKED (RFC 6455 5.1) with the header written
   alone so the payload follows verbatim, and reads only when the
   caller's poll says it may, draining whole buffered frames before it
   issues a `recv`. Inbound is deliberately tiny and strict — a ping is
   ponged, a close echoed, anything binary, fragmented or oversize
-  answered with a close code. `Nuntius.Socket_Io` is the whole-response
+  answered with a close code. A peer adopted `Deflated` also sends
+  `Send_Packed` frames with RSV1 set and inflates packed messages,
+  capped on what comes out. `Nuntius.Socket_Io` is the whole-response
   write both it and the serving loop share.
+- **`Nuntius.Deflate`** — the one unit that calls zlib (the binding the
+  aws crate bundles): `Gzip` for a response body, and `Pack`/`Unpack`
+  for one permessage-deflate message. Nothing raises; a failure is an
+  empty result or a verdict, and the caller sends plain.
 
 ## Use it
 

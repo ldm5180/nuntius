@@ -3,9 +3,13 @@ with AUnit.Assertions; use AUnit.Assertions;
 with Ada.Streams;  use Ada.Streams;
 with GNAT.Sockets; use GNAT.Sockets;
 
+with Nuntius.Codings;
+with Nuntius.Deflate;
 with Nuntius.Rfc6455; use Nuntius.Rfc6455;
 with Nuntius.Socket_Io;
 with Nuntius.Ws.Peer;
+
+with Test_Payloads; use Test_Payloads;
 
 --  The server side of a websocket, over a real loopback pair: the
 --  client end speaks through the existing MASKED encoders, which is
@@ -301,10 +305,153 @@ package body Nuntius_Ws_Peer_Tests is
         (Peers.Pump (P, True, Into, Last) = Peers.Faulted,
          "an RSV1 frame is a fault");
       Assert
-        (Read_Frame (Browser, 4) = [16#88#, 2, 16#03#, 16#EB#],
-         "answered 1003");
+        (Read_Frame (Browser, 4) = [16#88#, 2, 16#03#, 16#EA#],
+         "answered 1002, a protocol error: nothing was agreed");
       Close_Socket (Browser);
    end Test_Rsv1_Faults;
+
+   --  One masked client frame, Lead its first byte, with an octet
+   --  payload under 126 bytes: what a browser sends for a packed
+   --  message (Lead 16#C1#).
+   procedure Browser_Frame (Sock : Socket_Type; Lead : Octet; Payload : Octets)
+   is
+      Wire : Octets (1 .. Payload'Length + 6);
+   begin
+      Wire (1) := Lead;
+      Wire (2) := 16#80# or Octet (Payload'Length);
+      for K in 0 .. 3 loop
+         Wire (3 + K) := Mask (K);
+      end loop;
+      for K in Payload'Range loop
+         Wire (6 + K - Payload'First + 1) :=
+           Payload (K) xor Mask ((K - Payload'First) mod 4);
+      end loop;
+      Nuntius.Socket_Io.Send_All (Sock, Wire);
+   end Browser_Frame;
+
+   function Bytes_Of (Text : String) return Octets is
+      B : Octets (1 .. Text'Length);
+   begin
+      for K in B'Range loop
+         B (K) := Character'Pos (Text (Text'First + K - 1));
+      end loop;
+      return B;
+   end Bytes_Of;
+
+   --  D12: a deflated peer sends the packed bytes with RSV1 set.
+   procedure Test_Send_Packed (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      pragma Unreferenced (T);
+      Browser, Served : Socket_Type;
+      P               : Peers.Peer;
+      Ok              : Boolean;
+      Text            : constant String := Json_Like (60);
+      Packed          : constant Octets := Nuntius.Deflate.Pack (Text);
+   begin
+      Assert (Packed'Length in 1 .. 125, "the fixture packs short");
+      Pair (Browser, Served);
+      Peers.Adopt (P, Served, Nuntius.Codings.Deflated);
+      Peers.Send_Packed (P, Text, Packed, Ok);
+      Assert (Ok, "the send succeeds");
+      Assert
+        (Read_Frame (Browser, 2) = [16#C1#, Octet (Packed'Length)],
+         "FIN + RSV1 + text, the packed length");
+      Assert (Read_Frame (Browser, Packed'Length) = Packed, "then the bytes");
+      Close_Socket (Browser);
+   end Test_Send_Packed;
+
+   --  A plain peer gets the text, whatever was packed for the others;
+   --  a deflated peer gets the text when nothing was packed.
+   procedure Test_Send_Packed_Falls_Back
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Browser, Served : Socket_Type;
+      Plain, Packing  : Peers.Peer;
+      Ok              : Boolean;
+      Text            : constant String := Json_Like (60);
+   begin
+      Pair (Browser, Served);
+      Peers.Adopt (Plain, Served);
+      Peers.Send_Packed (Plain, Text, Nuntius.Deflate.Pack (Text), Ok);
+      Assert (Ok, "the plain send succeeds");
+      Assert
+        (Read_Frame (Browser, 4)
+         = [16#81#,
+            126,
+            Octet (Text'Length / 256),
+            Octet (Text'Length mod 256)],
+         "a plain peer gets a plain frame");
+      Assert (Read_Frame (Browser, Text'Length) = Bytes_Of (Text), "the text");
+      Close_Socket (Browser);
+
+      Pair (Browser, Served);
+      Peers.Adopt (Packing, Served, Nuntius.Codings.Deflated);
+      Peers.Send_Packed (Packing, "hi", [], Ok);
+      Assert
+        (Read_Frame (Browser, 4)
+         = [16#81#, 2, Character'Pos ('h'), Character'Pos ('i')],
+         "nothing packed goes plain, RSV1 clear");
+      Close_Socket (Browser);
+   end Test_Send_Packed_Falls_Back;
+
+   --  RSV1 is per message: a deflated peer reads packed and plain text.
+   procedure Test_Packed_Inbound (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Browser, Served : Socket_Type;
+      P               : Peers.Peer;
+      Into            : String (1 .. Max_Inbound);
+      Last            : Natural;
+      Text            : constant String := Json_Like (20) (1 .. Max_Inbound);
+   begin
+      Pair (Browser, Served);
+      Peers.Adopt (P, Served, Nuntius.Codings.Deflated);
+      Browser_Frame (Browser, 16#C1#, Nuntius.Deflate.Pack (Text));
+      Assert
+        (Peers.Pump (P, True, Into, Last) = Peers.Message,
+         "a packed message is a message");
+      Assert (Into (1 .. Last) = Text, "inflated to exactly the cap");
+      Browser_Text (Browser, "{""token"":""x""}");
+      Assert
+        (Peers.Pump (P, True, Into, Last) = Peers.Message
+         and then Into (1 .. Last) = "{""token"":""x""}",
+         "a plain one still reads");
+      Close_Socket (Browser);
+   end Test_Packed_Inbound;
+
+   --  D9: what a packed frame inflates to is capped, and a stream zlib
+   --  refuses, or RSV1 on a control frame, closes the peer.
+   procedure Test_Packed_Inbound_Faults
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Browser, Served : Socket_Type;
+      P               : Peers.Peer;
+      Into            : String (1 .. Max_Inbound);
+      Last            : Natural;
+      Zeros           : constant String (1 .. 4_096) := [others => '0'];
+
+      procedure Expect (Lead : Octet; Payload : Octets; Code : Octets) is
+      begin
+         Pair (Browser, Served);
+         Peers.Adopt (P, Served, Nuntius.Codings.Deflated);
+         Browser_Frame (Browser, Lead, Payload);
+         Assert
+           (Peers.Pump (P, True, Into, Last) = Peers.Faulted,
+            "the frame is a fault");
+         Assert
+           (Read_Frame (Browser, 4) = [16#88#, 2] & Code,
+            "answered with the expected code");
+         Close_Socket (Browser);
+      end Expect;
+   begin
+      --  1009: 4 KB of zeros packs into a small frame.
+      Expect (16#C1#, Nuntius.Deflate.Pack (Zeros), [16#03#, 16#F1#]);
+      --  1007: a reserved deflate block type.
+      Expect (16#C1#, [16#FF#, 16#FF#], [16#03#, 16#EF#]);
+      --  1002: RSV1 on a ping (RFC 7692 6.1: data frames only).
+      Expect (16#C9#, [], [16#03#, 16#EA#]);
+   end Test_Packed_Inbound_Faults;
 
    procedure Test_Eof_Is_Closed (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
@@ -411,6 +558,20 @@ package body Nuntius_Ws_Peer_Tests is
       Register_Routine (T, Test_Eof_Is_Closed'Access, "EOF closes the peer");
       Register_Routine
         (T, Test_Rsv1_Faults'Access, "an RSV1 frame on a plain peer faults");
+      Register_Routine
+        (T, Test_Send_Packed'Access, "a deflated peer sends RSV1 frames");
+      Register_Routine
+        (T,
+         Test_Send_Packed_Falls_Back'Access,
+         "Send_Packed goes plain on a plain peer or with nothing packed");
+      Register_Routine
+        (T,
+         Test_Packed_Inbound'Access,
+         "a deflated peer reads packed and plain messages");
+      Register_Routine
+        (T,
+         Test_Packed_Inbound_Faults'Access,
+         "a deflated peer caps, refuses corrupt, and 1002s control RSV1");
       Register_Routine
         (T, Test_Send_Text_Unmasked'Access, "server frames go out unmasked");
       Register_Routine

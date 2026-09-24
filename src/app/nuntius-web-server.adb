@@ -5,6 +5,7 @@ with Ada.Strings.Fixed;
 
 with GNAT.Sockets;
 
+with Nuntius.Deflate;
 with Nuntius.Fd_Poll;
 with Nuntius.Socket_Io;
 with Nuntius.Web.Handshake;
@@ -48,10 +49,41 @@ procedure Nuntius.Web.Server (Bind : String; Port : Natural) is
 
       type Head_Result is (Complete, Dropped, Over_Budget);
 
-      procedure Respond (S : Status; Content_Type, Payload : String) is
+      --  Whether the request takes gzip, set once it is parsed; the
+      --  answers before that are identity.
+      Takes_Gzip : Boolean := False;
+
+      procedure Send_Response
+        (S            : Status;
+         Content_Type : String;
+         Body_Text    : String;
+         Coding       : Codings.Content_Coding) is
       begin
          Nuntius.Socket_Io.Send_All
-           (Sock, Response_Head (S, Content_Type, Payload'Length) & Payload);
+           (Sock,
+            Response_Head (S, Content_Type, Body_Text'Length, Coding)
+            & Body_Text);
+      end Send_Response;
+
+      --  Gzip when Response_Coding says so and zlib delivers; a member
+      --  that did not come back is logged and sent identity instead.
+      procedure Respond (S : Status; Content_Type, Payload : String) is
+      begin
+         if Response_Coding
+              (Takes_Gzip, Coding_Policy, Content_Type, Payload'Length)
+           = Codings.Gzip
+         then
+            declare
+               Member : constant String := Nuntius.Deflate.Gzip (Payload);
+            begin
+               if Member'Length > 0 then
+                  Send_Response (S, Content_Type, Member, Codings.Gzip);
+                  return;
+               end if;
+               Log_Warn ("gzip failed; sent identity");
+            end;
+         end if;
+         Send_Response (S, Content_Type, Payload, Codings.Identity);
       end Respond;
 
       function Read_Head return Head_Result is
@@ -138,15 +170,18 @@ procedure Nuntius.Web.Server (Bind : String; Port : Natural) is
       --  over and the accept loop still owns the socket.  Adopt is the
       --  last call, and Adopted is set the statement after it returns.
       procedure Upgrade (R : Request) is
+         Coding : constant Codings.Message_Coding :=
+           Upgrade_Coding (R.Deflate_Offered, Coding_Policy);
       begin
          Nuntius.Socket_Io.Send_All
-           (Sock, Upgrade_Head (Handshake.Accept_Key (Ws_Key_Of (R))));
-         Adopt (R, Sock);
+           (Sock, Upgrade_Head (Handshake.Accept_Key (Ws_Key_Of (R)), Coding));
+         Adopt (R, Sock, Coding);
          Adopted := True;
       end Upgrade;
 
       procedure Dispatch (R : Request) is
       begin
+         Takes_Gzip := R.Accepts_Gzip;
          if R.Length_Refused then
             Respond (Too_Large_413, "text/plain", "body too large");
          elsif not R.Well_Formed then

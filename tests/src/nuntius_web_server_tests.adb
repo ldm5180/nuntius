@@ -6,9 +6,12 @@ with GNAT.Sockets;
 
 with AUnit.Assertions; use AUnit.Assertions;
 
+with Nuntius.Codings;
 with Nuntius.Web.Server;
 with Nuntius.Ws.Native_Client;
 with Nuntius.Ws.Peer;
+
+with Test_Payloads;
 
 --  The serial serve loop over a REAL loopback socket -- the coverage
 --  the mechanics never had while they lived in a consumer: 200 through
@@ -45,16 +48,25 @@ package body Nuntius_Web_Server_Tests is
       function Adopted return Natural;
       procedure Note_Upgrade;
       function Saw_Upgrade return Boolean;
+      procedure Set_Gzip_Port (P : Natural);
+      function Gzip_Port return Natural;
+      procedure Set_Deflate_Port (P : Natural);
+      function Deflate_Port return Natural;
+      procedure Keep_Coding (C : Nuntius.Codings.Message_Coding);
+      function Kept_Coding return Nuntius.Codings.Message_Coding;
    private
-      Port_V        : Natural := 0;
-      Short_Port_V  : Natural := 0;
-      Stream_Port_V : Natural := 0;
-      Handled_V     : Natural := 0;
-      Stop_V        : Boolean := False;
-      Adopted_V     : Natural := 0;
-      Held_V        : GNAT.Sockets.Socket_Type := GNAT.Sockets.No_Socket;
-      Has_Held_V    : Boolean := False;
-      Upgrade_V     : Boolean := False;
+      Port_V         : Natural := 0;
+      Short_Port_V   : Natural := 0;
+      Stream_Port_V  : Natural := 0;
+      Handled_V      : Natural := 0;
+      Stop_V         : Boolean := False;
+      Adopted_V      : Natural := 0;
+      Held_V         : GNAT.Sockets.Socket_Type := GNAT.Sockets.No_Socket;
+      Has_Held_V     : Boolean := False;
+      Upgrade_V      : Boolean := False;
+      Gzip_Port_V    : Natural := 0;
+      Deflate_Port_V : Natural := 0;
+      Coding_V       : Nuntius.Codings.Message_Coding := Nuntius.Codings.Plain;
    end Cells;
 
    protected body Cells is
@@ -68,6 +80,9 @@ package body Nuntius_Web_Server_Tests is
          Adopted_V := 0;
          Has_Held_V := False;
          Upgrade_V := False;
+         Gzip_Port_V := 0;
+         Deflate_Port_V := 0;
+         Coding_V := Nuntius.Codings.Plain;
       end Reset;
 
       procedure Set_Port (P : Natural) is
@@ -135,6 +150,30 @@ package body Nuntius_Web_Server_Tests is
 
       function Saw_Upgrade return Boolean
       is (Upgrade_V);
+
+      procedure Set_Gzip_Port (P : Natural) is
+      begin
+         Gzip_Port_V := P;
+      end Set_Gzip_Port;
+
+      function Gzip_Port return Natural
+      is (Gzip_Port_V);
+
+      procedure Set_Deflate_Port (P : Natural) is
+      begin
+         Deflate_Port_V := P;
+      end Set_Deflate_Port;
+
+      function Deflate_Port return Natural
+      is (Deflate_Port_V);
+
+      procedure Keep_Coding (C : Nuntius.Codings.Message_Coding) is
+      begin
+         Coding_V := C;
+      end Keep_Coding;
+
+      function Kept_Coding return Nuntius.Codings.Message_Coding
+      is (Coding_V);
    end Cells;
 
    function Stop return Boolean
@@ -157,25 +196,39 @@ package body Nuntius_Web_Server_Tests is
       Cells.Set_Short_Port (Port);
    end On_Listening_Short;
 
+   --  A body worth compressing: 2,280 bytes of repetitive JSON.
+   Big_Json : constant String := Test_Payloads.Json_Like (60);
+
    --  The whole routing policy a consumer would bring: echo the head
-   --  the loop parsed and the body it read.
+   --  the loop parsed and the body it read, or, on /big, /png and
+   --  /small, a body the coding tests can size.
    procedure Handle
      (R       : Nuntius.Web.Request;
       Payload : String;
       Respond :
         not null access procedure
-          (S : Nuntius.Web.Status; Content_Type, Payload : String)) is
+          (S : Nuntius.Web.Status; Content_Type, Payload : String))
+   is
+      Target : constant String := Nuntius.Web.Target_Of (R);
    begin
       Cells.Bump_Handled;
-      Respond
-        (Nuntius.Web.Ok_200,
-         "text/plain",
-         "hi:"
-         & Nuntius.Web.Method_Kind'Image (R.Method)
-         & ":"
-         & Nuntius.Web.Target_Of (R)
-         & ":"
-         & Payload);
+      if Target = "/big" then
+         Respond (Nuntius.Web.Ok_200, "application/json", Big_Json);
+      elsif Target = "/png" then
+         Respond (Nuntius.Web.Ok_200, "image/png", Big_Json);
+      elsif Target = "/small" then
+         Respond (Nuntius.Web.Ok_200, "application/json", Big_Json (1 .. 100));
+      else
+         Respond
+           (Nuntius.Web.Ok_200,
+            "text/plain",
+            "hi:"
+            & Nuntius.Web.Method_Kind'Image (R.Method)
+            & ":"
+            & Nuntius.Web.Target_Of (R)
+            & ":"
+            & Payload);
+      end if;
    end Handle;
 
    procedure On_Listening_Stream (Port : Natural) is
@@ -187,11 +240,26 @@ package body Nuntius_Web_Server_Tests is
    function Takes_Stream (R : Nuntius.Web.Request) return Boolean
    is (R.Upgrade and then Nuntius.Web.Target_Of (R) = "/api/stream");
 
-   procedure Keep (R : Nuntius.Web.Request; Sock : GNAT.Sockets.Socket_Type) is
+   procedure Keep
+     (R      : Nuntius.Web.Request;
+      Sock   : GNAT.Sockets.Socket_Type;
+      Coding : Nuntius.Codings.Message_Coding)
+   is
       pragma Unreferenced (R);
    begin
+      Cells.Keep_Coding (Coding);
       Cells.Keep (Sock);
    end Keep;
+
+   procedure On_Listening_Gzip (Port : Natural) is
+   begin
+      Cells.Set_Gzip_Port (Port);
+   end On_Listening_Gzip;
+
+   procedure On_Listening_Deflate (Port : Natural) is
+   begin
+      Cells.Set_Deflate_Port (Port);
+   end On_Listening_Deflate;
 
    --  What an upgrade the consumer did NOT take meets.
    procedure Handle_Stream
@@ -241,6 +309,29 @@ package body Nuntius_Web_Server_Tests is
         Log_Info        => Log_Quiet,
         Log_Warn        => Log_Quiet,
         On_Listening    => On_Listening_Stream,
+        Handle          => Handle_Stream,
+        Accepts_Upgrade => Takes_Stream,
+        Adopt           => Keep);
+
+   --  The same loops with the codings on.
+   procedure Serve_Gzip is new
+     Nuntius.Web.Server
+       (Stop          => Stop,
+        Sleep_Ms      => Sleep_Ms,
+        Log_Info      => Log_Quiet,
+        Log_Warn      => Log_Quiet,
+        On_Listening  => On_Listening_Gzip,
+        Coding_Policy => Nuntius.Codings.Compress_When_Offered,
+        Handle        => Handle);
+
+   procedure Serve_Deflate is new
+     Nuntius.Web.Server
+       (Stop            => Stop,
+        Sleep_Ms        => Sleep_Ms,
+        Log_Info        => Log_Quiet,
+        Log_Warn        => Log_Quiet,
+        On_Listening    => On_Listening_Deflate,
+        Coding_Policy   => Nuntius.Codings.Compress_When_Offered,
         Handle          => Handle_Stream,
         Accepts_Upgrade => Takes_Stream,
         Adopt           => Keep);
@@ -724,6 +815,242 @@ package body Nuntius_Web_Server_Tests is
          "the consumer answered it 426: " & To_String (Reply));
    end Test_Plain_Get_On_Stream_Path;
 
+   function Test_Gzip_Port return Natural
+   is (Cells.Gzip_Port);
+
+   function Test_Deflate_Port return Natural
+   is (Cells.Deflate_Port);
+
+   --  What follows the head's blank line.
+   function Body_Of (Reply : String) return String
+   is (Reply (Ada.Strings.Fixed.Index (Reply, CRLF & CRLF) + 4 .. Reply'Last));
+
+   function Get_With (Target, Headers : String) return String
+   is ("GET " & Target & " HTTP/1.1" & CRLF & Headers & CRLF);
+
+   Accepting : constant String := "Accept-Encoding: gzip, deflate, br" & CRLF;
+
+   --  D4: gzip when the request takes it, the type shrinks and the body
+   --  is past the floor; anything else is today's identity response.
+   procedure Test_Gzip_Responses (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Port_Seen                   : Natural := 0;
+      Big, Plain, Small, Png, Off : Unbounded_String;
+   begin
+      Cells.Reset;
+      declare
+         task Gzip_Task;
+         task Off_Task;
+
+         task body Gzip_Task is
+         begin
+            Serve_Gzip ("127.0.0.1", 0);
+         end Gzip_Task;
+
+         task body Off_Task is
+         begin
+            Serve ("127.0.0.1", 0);
+         end Off_Task;
+      begin
+         Port_Seen := Await_Port (Test_Gzip_Port'Access);
+         if Port_Seen /= 0 and then Await_Port (Test_Port'Access) /= 0 then
+            Big :=
+              To_Unbounded_String
+                (Exchange (Port_Seen, Get_With ("/big", Accepting)));
+            Plain :=
+              To_Unbounded_String
+                (Exchange (Port_Seen, Get_With ("/big", "")));
+            Small :=
+              To_Unbounded_String
+                (Exchange (Port_Seen, Get_With ("/small", Accepting)));
+            Png :=
+              To_Unbounded_String
+                (Exchange (Port_Seen, Get_With ("/png", Accepting)));
+            Off :=
+              To_Unbounded_String
+                (Exchange (Cells.Port, Get_With ("/big", Accepting)));
+         end if;
+         Cells.Request_Stop;
+      exception
+         when others =>
+            Cells.Request_Stop;
+            raise;
+      end;
+
+      Assert (Port_Seen /= 0, "the gzip server reported its port");
+      Assert
+        (Has (To_String (Big), "Content-Encoding: gzip" & CRLF)
+         and then Has (To_String (Big), "Vary: Accept-Encoding" & CRLF),
+         "a big JSON body to a gzip client is gzipped: " & To_String (Big));
+      Assert
+        (Test_Payloads.Gunzip (Body_Of (To_String (Big)), 4_096) = Big_Json,
+         "and the body is the gzip of the payload");
+      Assert
+        (Has
+           (To_String (Big),
+            "Content-Length:"
+            & Natural'Image (Body_Of (To_String (Big))'Length)
+            & CRLF),
+         "with the packed length");
+      Assert
+        (not Has (To_String (Plain), "Content-Encoding")
+         and then Body_Of (To_String (Plain)) = Big_Json,
+         "no Accept-Encoding, identity");
+      Assert
+        (not Has (To_String (Small), "Content-Encoding")
+         and then Body_Of (To_String (Small)) = Big_Json (1 .. 100),
+         "under the floor, identity");
+      Assert
+        (not Has (To_String (Png), "Content-Encoding"),
+         "an image type, identity");
+      Assert
+        (not Has (To_String (Off), "Content-Encoding")
+         and then Body_Of (To_String (Off)) = Big_Json,
+         "the default policy is identity only");
+   end Test_Gzip_Responses;
+
+   Key_24 : constant String := "dGhlIHNhbXBsZSBub25jZQ==";
+
+   --  An upgrade request sent raw, with Extensions as the offer ("" for
+   --  none); answers the head up to its blank line.  The socket stays
+   --  with the server, which adopted it.
+   function Upgrade_Reply (Port : Natural; Extensions : String) return String
+   is
+      use GNAT.Sockets;
+      use type Ada.Streams.Stream_Element_Offset;
+
+      Sock  : Socket_Type;
+      Reply : Unbounded_String;
+      Text  : constant String :=
+        "GET /api/stream HTTP/1.1"
+        & CRLF
+        & "Connection: Upgrade"
+        & CRLF
+        & "Upgrade: websocket"
+        & CRLF
+        & "Sec-WebSocket-Version: 13"
+        & CRLF
+        & "Sec-WebSocket-Key: "
+        & Key_24
+        & CRLF
+        & (if Extensions = ""
+           then ""
+           else "Sec-WebSocket-Extensions: " & Extensions & CRLF)
+        & CRLF;
+      Buf   : Ada.Streams.Stream_Element_Array (1 .. Text'Length);
+      Last  : Ada.Streams.Stream_Element_Offset;
+   begin
+      Create_Socket (Sock);
+      Set_Socket_Option
+        (Sock, Socket_Level, (Name => Receive_Timeout, Timeout => 2.0));
+      Connect_Socket
+        (Sock,
+         (Family => Family_Inet,
+          Addr   => Inet_Addr ("127.0.0.1"),
+          Port   => Port_Type (Port)));
+      for K in Text'Range loop
+         Buf (Ada.Streams.Stream_Element_Offset (K)) :=
+           Ada.Streams.Stream_Element (Character'Pos (Text (K)));
+      end loop;
+      Send_Socket (Sock, Buf, Last);
+      while not Has (To_String (Reply), CRLF & CRLF) loop
+         declare
+            One : Ada.Streams.Stream_Element_Array (1 .. 1);
+         begin
+            Receive_Socket (Sock, One, Last);
+            exit when Last < One'First;
+            Append (Reply, Character'Val (One (1)));
+         exception
+            when Socket_Error =>
+               exit;
+         end;
+      end loop;
+      Close_Socket (Sock);
+      return To_String (Reply);
+   end Upgrade_Reply;
+
+   --  Drop the socket the server handed over, so the next upgrade's
+   --  adoption is its own.
+   procedure Release_Held is
+      Sock : GNAT.Sockets.Socket_Type;
+      Got  : Boolean := False;
+   begin
+      for K in 1 .. 200 loop
+         Cells.Take (Sock, Got);
+         exit when Got;
+         delay 0.01;
+      end loop;
+      if Got then
+         GNAT.Sockets.Close_Socket (Sock);
+      end if;
+   end Release_Held;
+
+   --  D7: the 101 says what was agreed, and Adopt is told the same.
+   procedure Test_Upgrade_Deflate (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      use type Nuntius.Codings.Message_Coding;
+      pragma Unreferenced (T);
+      Port_Seen                : Natural := 0;
+      Offered, Bare, Off       : Unbounded_String;
+      Offered_C, Bare_C, Off_C : Nuntius.Codings.Message_Coding :=
+        Nuntius.Codings.Plain;
+   begin
+      Cells.Reset;
+      declare
+         task Deflate_Task;
+         task Off_Task;
+
+         task body Deflate_Task is
+         begin
+            Serve_Deflate ("127.0.0.1", 0);
+         end Deflate_Task;
+
+         task body Off_Task is
+         begin
+            Serve_Stream ("127.0.0.1", 0);
+         end Off_Task;
+      begin
+         Port_Seen := Await_Port (Test_Deflate_Port'Access);
+         if Port_Seen /= 0 and then Await_Port (Test_Stream_Port'Access) /= 0
+         then
+            Offered :=
+              To_Unbounded_String
+                (Upgrade_Reply
+                   (Port_Seen, "permessage-deflate; client_max_window_bits"));
+            Release_Held;
+            Offered_C := Cells.Kept_Coding;
+            Bare := To_Unbounded_String (Upgrade_Reply (Port_Seen, ""));
+            Release_Held;
+            Bare_C := Cells.Kept_Coding;
+            Off :=
+              To_Unbounded_String
+                (Upgrade_Reply (Cells.Stream_Port, "permessage-deflate"));
+            Release_Held;
+            Off_C := Cells.Kept_Coding;
+         end if;
+         Cells.Request_Stop;
+      exception
+         when others =>
+            Cells.Request_Stop;
+            raise;
+      end;
+
+      Assert (Port_Seen /= 0, "the deflate server reported its port");
+      Assert
+        (Has (To_String (Offered), Nuntius.Web.Deflate_Extension & CRLF),
+         "an offer is answered with the extension: " & To_String (Offered));
+      Assert
+        (Offered_C = Nuntius.Codings.Deflated, "and Adopt is told Deflated");
+      Assert
+        (Length (Bare) = 129 and then Bare_C = Nuntius.Codings.Plain,
+         "no offer: today's 101 and Plain: " & To_String (Bare));
+      Assert
+        (not Has (To_String (Off), "Sec-WebSocket-Extensions")
+         and then Off_C = Nuntius.Codings.Plain,
+         "the default policy never agrees one");
+   end Test_Upgrade_Deflate;
+
    overriding
    procedure Register_Tests (T : in out Test) is
    begin
@@ -748,6 +1075,14 @@ package body Nuntius_Web_Server_Tests is
         (T,
          Test_Plain_Get_On_Stream_Path'Access,
          "a plain GET on the stream target is still a GET");
+      Register_Routine
+        (T,
+         Test_Gzip_Responses'Access,
+         "a gzip-taking request gets a gzipped body when it pays");
+      Register_Routine
+        (T,
+         Test_Upgrade_Deflate'Access,
+         "a deflate offer is answered in the 101 and told to Adopt");
    end Register_Tests;
 
    overriding

@@ -15,9 +15,13 @@
 --  whole-connection budget (Connection_Seconds) bounds what one peer
 --  can hold, however it paces its bytes.  An upgrade request the
 --  consumer accepts is answered 101 and handed to Adopt; the loop
---  never touches that socket again.
+--  never touches that socket again.  Coding_Policy decides whether a
+--  client's offer of a coding is taken: gzip on a response body, and
+--  permessage-deflate on an adopted socket, which Adopt is told.
 
 with GNAT.Sockets;
+
+with Nuntius.Codings;
 
 generic
    with function Stop return Boolean;
@@ -30,6 +34,9 @@ generic
    --  however it paces its bytes (the per-read IO timeout alone would
    --  let a dribble hold the serial loop for hours).
    Connection_Seconds : Natural := 10;
+   --  Whether a coding the client offers is applied.  The default is
+   --  every byte as before codings existed, so a consumer opts in.
+   Coding_Policy : Nuntius.Codings.Policy := Nuntius.Codings.Identity_Only;
    --  Called once per well-formed GET or POST with the parsed head and
    --  the body: exactly R.Content_Length bytes for a POST, always ""
    --  for a GET (one with a body was answered 400 before this).  Must
@@ -45,7 +52,12 @@ generic
    --  True means the loop writes the 101 and calls Adopt with the
    --  request and the socket, which the consumer then OWNS -- the loop
    --  neither reads nor closes it again.  False means Handle answers
-   --  it like any other GET.  Adopt must not raise.
+   --  it like any other GET.  Coding is what the 101 agreed, and what
+   --  the consumer's peer must honour.  Adopt must not raise.
    with function Accepts_Upgrade (R : Request) return Boolean is Never_Upgrade;
-   with procedure Adopt (R : Request; Sock : GNAT.Sockets.Socket_Type) is null;
+   with
+     procedure Adopt
+       (R      : Request;
+        Sock   : GNAT.Sockets.Socket_Type;
+        Coding : Nuntius.Codings.Message_Coding) is null;
 procedure Nuntius.Web.Server (Bind : String; Port : Natural);

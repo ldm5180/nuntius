@@ -1,21 +1,27 @@
 with Ada.Streams;
 use type Ada.Streams.Stream_Element_Offset;
 
+with Nuntius.Deflate;
 with Nuntius.Socket_Io;
 
 package body Nuntius.Ws.Peer is
 
    use GNAT.Sockets;
    use Nuntius.Rfc6455;
+   use type Nuntius.Codings.Message_Coding;
 
    --  The payload goes out in slices this size, so the largest local
    --  buffer a send needs is a constant however big the document is.
    Chunk_Bytes : constant := 4_096;
 
-   procedure Adopt (Self : in out Peer; Sock : Socket_Type) is
+   procedure Adopt
+     (Self   : in out Peer;
+      Sock   : Socket_Type;
+      Coding : Nuntius.Codings.Message_Coding := Nuntius.Codings.Plain) is
    begin
       Self.Sock := Sock;
       Self.Open := True;
+      Self.Coding := Coding;
       Self.Len := 0;
    end Adopt;
 
@@ -38,21 +44,33 @@ package body Nuntius.Ws.Peer is
       end if;
    end Shut;
 
+   --  One frame header on the wire; raises Socket_Error as Send_All
+   --  does, for the caller's handler.
+   procedure Send_Head
+     (Self   : Peer;
+      Op     : Opcode;
+      Length : Natural;
+      Coding : Nuntius.Codings.Message_Coding := Nuntius.Codings.Plain)
+   is
+      Head : Octets (1 .. Max_Server_Header);
+      Last : Server_Header_Count;
+   begin
+      Server_Header (Op, Length, Head, Last, Coding);
+      Nuntius.Socket_Io.Send_All (Self.Sock, Head (1 .. Last));
+   end Send_Head;
+
    --  The frame header, then the payload in slices.  Any socket error
    --  anywhere in it shuts the peer.
    procedure Send_Framed
      (Self : in out Peer; Op : Opcode; Text : String; Ok : out Boolean)
    is
-      Head : Octets (1 .. Max_Server_Header);
-      Last : Server_Header_Count;
-      Pos  : Natural := Text'First;
+      Pos : Natural := Text'First;
    begin
       Ok := False;
       if not Self.Open then
          return;
       end if;
-      Server_Header (Op, Text'Length, Head, Last);
-      Nuntius.Socket_Io.Send_All (Self.Sock, Head (1 .. Last));
+      Send_Head (Self, Op, Text'Length);
       while Pos <= Text'Last loop
          declare
             Stop  : constant Natural :=
@@ -78,18 +96,42 @@ package body Nuntius.Ws.Peer is
       Send_Framed (Self, Op_Text, Text, Ok);
    end Send_Text;
 
+   --  A packed message's frame: RSV1 set, the octets verbatim.
+   procedure Send_Deflated
+     (Self : in out Peer; Packed : Octets; Ok : out Boolean) is
+   begin
+      Ok := False;
+      if not Self.Open then
+         return;
+      end if;
+      Send_Head (Self, Op_Text, Packed'Length, Nuntius.Codings.Deflated);
+      Nuntius.Socket_Io.Send_All (Self.Sock, Packed);
+      Ok := True;
+   exception
+      when Socket_Error =>
+         Shut (Self);
+         Ok := False;
+   end Send_Deflated;
+
+   procedure Send_Packed
+     (Self : in out Peer; Text : String; Packed : Octets; Ok : out Boolean) is
+   begin
+      if Self.Coding = Nuntius.Codings.Deflated and then Packed'Length > 0 then
+         Send_Deflated (Self, Packed, Ok);
+      else
+         Send_Text (Self, Text, Ok);
+      end if;
+   end Send_Packed;
+
    --  A control frame with an octet payload; control frames are at
    --  most 125 bytes, which every caller here respects.
    procedure Send_Control (Self : in out Peer; Op : Opcode; Payload : Octets)
    is
-      Head : Octets (1 .. Max_Server_Header);
-      Last : Server_Header_Count;
    begin
       if not Self.Open then
          return;
       end if;
-      Server_Header (Op, Payload'Length, Head, Last);
-      Nuntius.Socket_Io.Send_All (Self.Sock, Head (1 .. Last));
+      Send_Head (Self, Op, Payload'Length);
       if Payload'Length > 0 then
          Nuntius.Socket_Io.Send_All (Self.Sock, Payload);
       end if;
@@ -152,8 +194,8 @@ package body Nuntius.Ws.Peer is
          Grew := False;
    end Read_Some;
 
-   --  A control frame's payload, unmasked: a browser masks everything
-   --  it sends, control frames included.
+   --  A frame's payload as octets, unmasked: a browser masks
+   --  everything it sends, control frames and packed messages included.
    function Unmasked (Self : Peer; H : Header) return Octets is
       Raw       : constant Octets :=
         Self.Accum (H.Header_Bytes + 1 .. H.Header_Bytes + H.Payload_Bytes);
@@ -168,6 +210,32 @@ package body Nuntius.Ws.Peer is
       return Out_Bytes;
    end Unmasked;
 
+   --  A packed text frame, inflated into at most Max_Inbound_Bytes of
+   --  Into: the cap is on what comes out, whatever the frame's size.
+   function Inflated
+     (Self : in out Peer; H : Header; Into : out String; Last : out Natural)
+      return Pump_Outcome
+   with Pre => Into'First = 1 and then Into'Length >= Max_Inbound_Bytes
+   is
+      Packed : constant Octets := Unmasked (Self, H);
+   begin
+      Consume (Self, H.Header_Bytes + H.Payload_Bytes);
+      case Nuntius.Deflate.Unpack
+             (Packed, Into (Into'First .. Max_Inbound_Bytes), Last)
+      is
+         when Nuntius.Deflate.Done    =>
+            return Message;
+
+         when Nuntius.Deflate.Too_Big =>
+            Close (Self, 1_009);
+            return Faulted;
+
+         when Nuntius.Deflate.Corrupt =>
+            Close (Self, 1_007);
+            return Faulted;
+      end case;
+   end Inflated;
+
    --  React to the whole frame at the accumulator's front.
    function React
      (Self : in out Peer; H : Header; Into : out String; Last : out Natural)
@@ -178,6 +246,9 @@ package body Nuntius.Ws.Peer is
       Last := 0;
       case H.Op is
          when Op_Text                     =>
+            if H.Rsv1 then
+               return Inflated (Self, H, Into, Last);
+            end if;
             Get_Text (Self.Accum (1 .. Self.Len), H, Into, Last);
             Consume (Self, Frame_Bytes);
             return Message;
@@ -233,9 +304,13 @@ package body Nuntius.Ws.Peer is
             return Faulted;
 
          when Ready     =>
-            if H.Rsv1 then
-               --  No extension was agreed on this peer.
-               Close (Self, 1_003);
+            if H.Rsv1
+              and then (Self.Coding = Nuntius.Codings.Plain
+                        or else H.Op /= Op_Text)
+            then
+               --  RSV1 is a packed data message's bit, and only where
+               --  the 101 agreed it (RFC 7692 6.1).
+               Close (Self, 1_002);
                return Faulted;
             end if;
             if H.Payload_Bytes > Max_Inbound_Bytes then
