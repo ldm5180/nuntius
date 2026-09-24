@@ -743,15 +743,19 @@ package body Nuntius_Ws_Native_Client_Tests is
          Close_Socket (Peer);
    end Flood_Server;
 
-   --  Serves the upgrade and then ONE text frame too big for the
-   --  client's bound.  Payload under 126 bytes, so the length rides the
-   --  second byte directly and no extended-length field is involved --
-   --  the bound is what is under test, not the header codec.
-   task type Big_Server is
+   --  Serves the upgrade and then ONE frame: Lead is its first byte
+   --  (FIN, RSV and opcode) and Payload its length in 'x's.  Payload
+   --  under 126 bytes, so the length rides the second byte directly and
+   --  no extended-length field is involved -- the frame's first byte or
+   --  the client's bound is what is under test, not the header codec.
+   task type One_Frame_Server
+     (Lead    : Stream_Element;
+      Payload : Natural)
+   is
       entry Serve (Listener : Socket_Type);
-   end Big_Server;
+   end One_Frame_Server;
 
-   task body Big_Server is
+   task body One_Frame_Server is
       Listen : Socket_Type;
       Peer   : Socket_Type;
       From   : Sock_Addr_Type;
@@ -794,12 +798,12 @@ package body Nuntius_Ws_Native_Client_Tests is
             10];
          Blob :
            Stream_Element_Array
-             (1 .. Head'Length + 2 + Stream_Element_Offset (Over_Bytes));
+             (1 .. Head'Length + 2 + Stream_Element_Offset (Payload));
       begin
          Blob (1 .. Head'Length) := Head;
-         Blob (Head'Length + 1) := 16#81#;               --  FIN | text
-         Blob (Head'Length + 2) := Stream_Element (Over_Bytes);
-         for K in 1 .. Stream_Element_Offset (Over_Bytes) loop
+         Blob (Head'Length + 1) := Lead;
+         Blob (Head'Length + 2) := Stream_Element (Payload);
+         for K in 1 .. Stream_Element_Offset (Payload) loop
             Blob (Head'Length + 2 + K) := Character'Pos ('x');
          end loop;
          Send_Bytes (Peer, Blob);
@@ -810,7 +814,7 @@ package body Nuntius_Ws_Native_Client_Tests is
    exception
       when others =>
          Close_Socket (Peer);
-   end Big_Server;
+   end One_Frame_Server;
 
    --  AN OVERSIZED FRAME KILLS THE CONNECTION AND MUST SAY SO.
    --
@@ -827,7 +831,7 @@ package body Nuntius_Ws_Native_Client_Tests is
    is
       pragma Unreferenced (T);
       Listen : Socket_Type;
-      Srv    : Big_Server;
+      Srv    : One_Frame_Server (Lead => 16#81#, Payload => Over_Bytes);
       C      : Over_Ws.Client;
       Buf    : String (1 .. 256);
       Last   : Natural;
@@ -865,6 +869,41 @@ package body Nuntius_Ws_Native_Client_Tests is
 
       Over_Ws.Close (C);
    end Test_Oversized_Is_Reported;
+
+   --  The client offers no extension, so a frame with RSV1 set is a
+   --  protocol violation: reconnect-worthy, and NOT counted as an
+   --  oversize, which would send an operator raising the wrong bound.
+   procedure Test_Rsv1_Is_Fatal (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Listen : Socket_Type;
+      Srv    : One_Frame_Server (Lead => 16#C1#, Payload => 5);
+      C      : Over_Ws.Client;
+      Buf    : String (1 .. 256);
+      Last   : Natural;
+      Ok     : Boolean;
+      Port   : Port_Type;
+   begin
+      Create_Socket (Listen);
+      Set_Socket_Option (Listen, Socket_Level, (Reuse_Address, True));
+      Bind_Socket (Listen, (Family_Inet, Loopback_Inet_Addr, 0));
+      Listen_Socket (Listen);
+      Port := Get_Socket_Name (Listen).Port;
+
+      Srv.Serve (Listen);
+
+      Over_Ws.Connect
+        (C,
+         "ws://127.0.0.1:" & Trim (Port_Type'Image (Port), Both) & "/r",
+         Ok);
+      Assert (Ok, "rsv1: handshake completes");
+
+      Over_Ws.Receive (C, Buf, Last, Ok);
+      Assert (not Ok, "an RSV1 frame on a plain socket is reconnect-worthy");
+      Assert (Over_Ws.Losses (C).Oversized = 0, "and it is not an oversize");
+
+      Over_Ws.Close (C);
+   end Test_Rsv1_Is_Fatal;
 
    --  A FULL RING DROPS FRAMES AND KEEPS STREAMING, WHICH IS WORSE TO
    --  DIAGNOSE THAN A RECONNECT.
@@ -954,6 +993,10 @@ package body Nuntius_Ws_Native_Client_Tests is
         (T,
          Test_Receive_For_Idle_Persists'Access,
          "Receive_For: the idle clock persists across patient calls");
+      Register_Routine
+        (T,
+         Test_Rsv1_Is_Fatal'Access,
+         "a frame with RSV1 set is a fault, not an oversize");
    end Register_Tests;
 
    overriding

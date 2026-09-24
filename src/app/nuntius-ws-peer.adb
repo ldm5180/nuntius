@@ -233,6 +233,11 @@ package body Nuntius.Ws.Peer is
             return Faulted;
 
          when Ready     =>
+            if H.Rsv1 then
+               --  No extension was agreed on this peer.
+               Close (Self, 1_003);
+               return Faulted;
+            end if;
             if H.Payload_Bytes > Max_Inbound_Bytes then
                Close (Self, 1_009);
                return Faulted;

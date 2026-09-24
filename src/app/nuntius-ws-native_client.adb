@@ -264,7 +264,12 @@ package body Nuntius.Ws.Native_Client is
                   exit;
 
                when Ready     =>
-                  if H.Payload_Bytes > Max_Frame_Bytes then
+                  if H.Rsv1 then
+                     --  This client offers no extension, so RSV1 is a
+                     --  violation like any reserved bit.
+                     Post (Self, E_Fault);
+                     exit;
+                  elsif H.Payload_Bytes > Max_Frame_Bytes then
                      Note_Oversized (Self.Ctx, H.Payload_Bytes);
                      Post (Self, E_Oversized);
                      exit;

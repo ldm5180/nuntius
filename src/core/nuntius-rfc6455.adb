@@ -2,6 +2,8 @@ package body Nuntius.Rfc6455
   with SPARK_Mode
 is
 
+   use type Codings.Message_Coding;
+
    CRLF : constant String := ASCII.CR & ASCII.LF;
 
    Base64_Alphabet : constant String :=
@@ -63,8 +65,8 @@ is
          Ext_N   : constant Natural := Length_Field_Extra_Bytes (Len7);
          Payload : Natural := (if Len7 < 126 then Natural (Len7) else 0);
       begin
-         --  RSV1..3 must be zero (we negotiate no extensions).
-         if (B0 and 16#70#) /= 0 then
+         --  RSV2 and RSV3 must be zero: no extension here uses them.
+         if (B0 and 16#30#) /= 0 then
             Result.Status := Invalid;
             return Result;
          end if;
@@ -119,6 +121,7 @@ is
             Op            => To_Opcode (Nibble),
             Fin           => (B0 and 16#80#) /= 0,
             Masked        => Masked,
+            Rsv1          => (B0 and 16#40#) /= 0,
             Header_Bytes  => 2 + Ext_N + Mask_N,
             Payload_Bytes => Payload,
             Mask          => Result.Mask);
@@ -189,12 +192,16 @@ is
      (Op             : Opcode;
       Payload_Length : Natural;
       Into           : out Octets;
-      Last           : out Server_Header_Count)
+      Last           : out Server_Header_Count;
+      Coding         : Codings.Message_Coding := Codings.Plain)
    is
       N : constant Natural := Payload_Length;
    begin
       Into := [others => 0];
-      Into (1) := 16#80# or Opcode_Nibble (Op);
+      Into (1) :=
+        16#80#
+        or (if Coding = Codings.Deflated then 16#40# else 0)
+        or Opcode_Nibble (Op);
       if N < 126 then
          Into (2) := Octet (N);
          Last := 2;

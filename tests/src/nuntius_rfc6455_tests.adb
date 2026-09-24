@@ -1,5 +1,6 @@
 with AUnit.Assertions; use AUnit.Assertions;
 
+with Nuntius.Codings;
 with Nuntius.Rfc6455; use Nuntius.Rfc6455;
 
 --  The pure RFC 6455 frame codec: header decode over known byte vectors
@@ -108,13 +109,40 @@ package body Nuntius_Rfc6455_Tests is
          "truncated extended length needs more");
    end Test_Need_More;
 
+   --  RSV1 is permessage-deflate's bit (RFC 7692 6): Decode reports it
+   --  and the adapter, which knows what was agreed, judges it.  RSV2
+   --  and RSV3 belong to no extension this crate speaks.
    procedure Test_Invalid_Rsv (T : in out AUnit.Test_Cases.Test_Case'Class) is
       pragma Unreferenced (T);
-      --  RSV1 set (0x40) with a text opcode: reserved, no extension negotiated
-      Rsv_Set : constant Octets := [16#C1#, 16#00#];
+      Rsv1 : constant Header := Decode ([16#C1#, 16#00#]);
    begin
-      Assert (Decode (Rsv_Set).Status = Invalid, "RSV bit set is Invalid");
+      Assert (Rsv1.Status = Ready, "RSV1 decodes");
+      Assert (Rsv1.Rsv1, "and says so");
+      Assert (Rsv1.Op = Op_Text and then Rsv1.Fin, "a final text frame");
+      Assert
+        (not Decode ([16#81#, 16#00#]).Rsv1, "a plain frame has RSV1 clear");
+      Assert
+        (Decode ([16#A1#, 16#00#]).Status = Invalid, "RSV2 set is Invalid");
+      Assert
+        (Decode ([16#91#, 16#00#]).Status = Invalid, "RSV3 set is Invalid");
    end Test_Invalid_Rsv;
+
+   --  A packed message's frame carries RSV1; nothing else changes.
+   procedure Test_Server_Header_Deflated
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Into : Octets (1 .. Max_Server_Header);
+      Last : Server_Header_Count;
+   begin
+      Server_Header (Op_Text, 10, Into, Last, Nuntius.Codings.Deflated);
+      Assert (Last = 2, "a short length needs two bytes");
+      Assert
+        (Into (1 .. 2) = [16#C1#, 16#0A#], "FIN + RSV1 + text, length 10");
+      Assert (Decode (Into (1 .. Last)).Rsv1, "and reads back as packed");
+      Server_Header (Op_Text, 10, Into, Last, Nuntius.Codings.Plain);
+      Assert (Into (1) = 16#81#, "plain is today's byte");
+   end Test_Server_Header_Deflated;
 
    procedure Test_Encode_Text_Roundtrip
      (T : in out AUnit.Test_Cases.Test_Case'Class)
@@ -270,7 +298,14 @@ package body Nuntius_Rfc6455_Tests is
       Register_Routine
         (T, Test_Decode_Control_Opcodes'Access, "decode ping/close/pong");
       Register_Routine (T, Test_Need_More'Access, "short buffers need more");
-      Register_Routine (T, Test_Invalid_Rsv'Access, "RSV bit is invalid");
+      Register_Routine
+        (T,
+         Test_Invalid_Rsv'Access,
+         "RSV1 is reported, RSV2 and RSV3 are invalid");
+      Register_Routine
+        (T,
+         Test_Server_Header_Deflated'Access,
+         "Server_Header sets RSV1 on a deflated message");
       Register_Routine
         (T, Test_Encode_Text_Roundtrip'Access, "encode text round-trips");
       Register_Routine (T, Test_Base64'Access, "base64 encodes per RFC 4648");

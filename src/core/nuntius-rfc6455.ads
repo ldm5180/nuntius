@@ -9,6 +9,8 @@
 --  the mask-key randomness, and the reassembly/lifecycle state all live in
 --  the shell adapter (Nuntius.Ws.Native_Client).
 
+with Nuntius.Codings;
+
 package Nuntius.Rfc6455
   with SPARK_Mode
 is
@@ -24,8 +26,10 @@ is
    --  Ready: the header at the front of the buffer decoded; Header_Bytes
    --  and Payload_Bytes are set and the caller checks whether the whole
    --  payload is present (and within its size cap).  Need_More: fewer bytes
-   --  than the header needs.  Invalid: a reserved bit or opcode -- a
-   --  protocol violation, reconnect-worthy.
+   --  than the header needs.  Invalid: RSV2, RSV3 or a reserved opcode --
+   --  a protocol violation, reconnect-worthy.  RSV1 is not invalid here:
+   --  it is permessage-deflate's bit, reported in Header.Rsv1 for the
+   --  adapter to judge against what its handshake agreed.
    type Scan_Status is (Need_More, Ready, Invalid);
 
    Max_Header_Bytes : constant := 14;  --  2 + 8 extended length + 4 mask
@@ -41,6 +45,8 @@ is
       Op            : Opcode := Op_Continuation;
       Fin           : Boolean := False;
       Masked        : Boolean := False;
+      --  The frame carries a packed message (RFC 7692 6).
+      Rsv1          : Boolean := False;
       Header_Bytes  : Header_Count := 0;
       Payload_Bytes : Natural := 0;
       Mask          : Mask_Key := No_Mask;
@@ -83,14 +89,15 @@ is
    subtype Server_Header_Count is Natural range 2 .. Max_Server_Header;
 
    --  A single, final, UNMASKED frame header (RFC 6455 5.1: a server
-   --  must not mask).  The payload follows on the wire verbatim, which
-   --  is what lets a 5 MB document go out without being copied into an
-   --  octet buffer first.
+   --  must not mask), RSV1 set when the payload is Deflated.  The
+   --  payload follows on the wire verbatim, which is what lets a 5 MB
+   --  document go out without being copied into an octet buffer first.
    procedure Server_Header
      (Op             : Opcode;
       Payload_Length : Natural;
       Into           : out Octets;
-      Last           : out Server_Header_Count)
+      Last           : out Server_Header_Count;
+      Coding         : Codings.Message_Coding := Codings.Plain)
    with
      Pre =>
        Into'First = 1

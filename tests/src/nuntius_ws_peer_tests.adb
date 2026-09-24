@@ -283,6 +283,29 @@ package body Nuntius_Ws_Peer_Tests is
       Close_Socket (Browser);
    end Test_Binary_Faults;
 
+   --  RSV1 set on a text frame: no extension was agreed on this peer.
+   procedure Test_Rsv1_Faults (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      pragma Unreferenced (T);
+      Browser, Served : Socket_Type;
+      P               : Peers.Peer;
+      Into            : String (1 .. Max_Inbound);
+      Last            : Natural;
+      --  FIN + RSV1 + text, MASK + len 1, mask, one byte.
+      Wire            : constant Octets :=
+        [16#C1#, 16#81#, 1, 2, 3, 4, 16#61# xor 1];
+   begin
+      Pair (Browser, Served);
+      Peers.Adopt (P, Served);
+      Nuntius.Socket_Io.Send_All (Browser, Wire);
+      Assert
+        (Peers.Pump (P, True, Into, Last) = Peers.Faulted,
+         "an RSV1 frame is a fault");
+      Assert
+        (Read_Frame (Browser, 4) = [16#88#, 2, 16#03#, 16#EB#],
+         "answered 1003");
+      Close_Socket (Browser);
+   end Test_Rsv1_Faults;
+
    procedure Test_Eof_Is_Closed (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
@@ -386,6 +409,8 @@ package body Nuntius_Ws_Peer_Tests is
       Register_Routine
         (T, Test_Binary_Faults'Access, "a binary frame is answered 1003");
       Register_Routine (T, Test_Eof_Is_Closed'Access, "EOF closes the peer");
+      Register_Routine
+        (T, Test_Rsv1_Faults'Access, "an RSV1 frame on a plain peer faults");
       Register_Routine
         (T, Test_Send_Text_Unmasked'Access, "server frames go out unmasked");
       Register_Routine
