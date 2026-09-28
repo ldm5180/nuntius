@@ -13,6 +13,7 @@ with Nuntius.Ws.Aws_Client;
 --  e.g.:  ws_listen ws://127.0.0.1:8080/stream '{"subscribe":"all"}'
 
 procedure Ws_Listen is
+   use type Nuntius.Ws.Receive_Outcome;
 
    Max_Frame : constant := 4_096;
 
@@ -29,10 +30,10 @@ begin
    end if;
 
    declare
-      C    : Clients.Client;
-      Buf  : String (1 .. Max_Frame);
-      Last : Natural;
-      Ok   : Boolean;
+      C   : Clients.Client;
+      Buf : String (1 .. Max_Frame);
+      Got : Nuntius.Ws.Reception;
+      Ok  : Boolean;
    begin
       Clients.Connect (C, Ada.Command_Line.Argument (1), Ok);
       if not Ok then
@@ -51,13 +52,13 @@ begin
       end if;
 
       for I in 1 .. Frames_To_Show loop
-         Clients.Receive (C, Buf, Last, Ok);
-         if not Ok then
+         Clients.Receive (C, Buf, Got);
+         if Got.Outcome /= Nuntius.Ws.Delivered then
             --  Reconnect-worthy; a real consumer would redial here.
             Put_Line ("stream ended (closed, errored, or idle)");
             exit;
          end if;
-         Put_Line (Buf (1 .. Last));
+         Put_Line (Buf (1 .. Got.Last));
       end loop;
 
       Clients.Close (C);

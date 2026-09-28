@@ -15,7 +15,15 @@ with Nuntius.Ws.Native_Client;
 
 package body Nuntius_Ws_Native_Client_Tests is
 
+   use type Nuntius.Ws.Receive_Outcome;
+
    use AUnit.Test_Cases.Registration;
+
+   --  Whether Got delivered exactly Text into Buf.
+   function Holds_Frame
+     (Got : Nuntius.Ws.Reception; Buf : String; Text : String) return Boolean
+   is (Got.Outcome = Nuntius.Ws.Delivered
+       and then Buf (Buf'First .. Got.Last) = Text);
 
    --  Fail fast rather than block a suite: tiny idle/poll so a hung read
    --  ends in a couple of seconds.
@@ -89,15 +97,17 @@ package body Nuntius_Ws_Native_Client_Tests is
       pragma Unreferenced (T);
       C     : Ws.Client;
       Buf   : String (1 .. 64);
+      Got   : Nuntius.Ws.Reception;
       Last  : Natural;
       Ok    : Boolean;
       Timed : Boolean;
    begin
       Ws.Send_Text (C, "hello", Ok);
       Assert (not Ok, "send before any dial reports Ok = False");
-      Ws.Receive (C, Buf, Last, Ok);
-      Assert (not Ok, "receive before any dial reports Ok = False");
-      Assert (Last = 0, "receive before any dial delivers nothing");
+      Ws.Receive (C, Buf, Got);
+      Assert
+        (Got.Outcome = Nuntius.Ws.Lost, "receive before any dial is lost");
+      Assert (Got.Last = 0, "receive before any dial delivers nothing");
       Ws.Receive_For (C, Buf, Last, 0.1, Ok, Timed);
       Assert
         (not Ok and then not Timed,
@@ -256,7 +266,7 @@ package body Nuntius_Ws_Native_Client_Tests is
       Srv    : Server;
       C      : Ws.Client;
       Buf    : String (1 .. 256);
-      Last   : Natural;
+      Got    : Nuntius.Ws.Reception;
       Ok     : Boolean;
       Port   : Port_Type;
    begin
@@ -275,18 +285,18 @@ package body Nuntius_Ws_Native_Client_Tests is
          Ok);
       Assert (Ok, "handshake completes over loopback");
 
-      Ws.Receive (C, Buf, Last, Ok);
-      Assert (Ok and then Buf (1 .. Last) = "hello", "first message is hello");
+      Ws.Receive (C, Buf, Got);
+      Assert (Holds_Frame (Got, Buf, "hello"), "first message is hello");
 
-      Ws.Receive (C, Buf, Last, Ok);
+      Ws.Receive (C, Buf, Got);
       Assert
-        (Ok and then Buf (1 .. Last) = "foobar",
+        (Holds_Frame (Got, Buf, "foobar"),
          "fragmented message reassembles to foobar");
 
       --  After the ping (auto-ponged) the server closes: next receive is
       --  reconnect-worthy.
-      Ws.Receive (C, Buf, Last, Ok);
-      Assert (not Ok, "peer close reports Ok = False");
+      Ws.Receive (C, Buf, Got);
+      Assert (Got.Outcome = Nuntius.Ws.Lost, "peer close is lost");
 
       Ws.Close (C);
       Assert (Result.Pong_Seen, "client auto-ponged the server's ping");
@@ -547,7 +557,7 @@ package body Nuntius_Ws_Native_Client_Tests is
       Srv    : Burst_Server;
       C      : Burst_Ws.Client;
       Buf    : String (1 .. 32);
-      Last   : Natural;
+      Got    : Nuntius.Ws.Reception;
       Ok     : Boolean;
       Port   : Port_Type;
    begin
@@ -568,10 +578,12 @@ package body Nuntius_Ws_Native_Client_Tests is
       --  Every one of the Burst_Count frames must arrive, in order, none
       --  dropped by an over-long read.
       for I in 0 .. Burst_Count - 1 loop
-         Burst_Ws.Receive (C, Buf, Last, Ok);
-         Assert (Ok, "burst: frame" & I'Image & " delivered");
+         Burst_Ws.Receive (C, Buf, Got);
          Assert
-           (Last = 1 and then Character'Pos (Buf (1)) = I,
+           (Got.Outcome = Nuntius.Ws.Delivered,
+            "burst: frame" & I'Image & " delivered");
+         Assert
+           (Got.Last = 1 and then Character'Pos (Buf (1)) = I,
             "burst: frame" & I'Image & " has the right payload, in order");
       end loop;
 
@@ -649,7 +661,7 @@ package body Nuntius_Ws_Native_Client_Tests is
       Srv    : Slow_Server;
       C      : Ws.Client;
       Buf    : String (1 .. 32);
-      Last   : Natural;
+      Got    : Nuntius.Ws.Reception;
       Ok     : Boolean;
       Port   : Port_Type;
    begin
@@ -667,9 +679,9 @@ package body Nuntius_Ws_Native_Client_Tests is
          Ok);
       Assert (Ok, "slow handshake: the dial waits out Idle_Limit");
 
-      Ws.Receive (C, Buf, Last, Ok);
+      Ws.Receive (C, Buf, Got);
       Assert
-        (Ok and then Last = 1 and then Buf (1) = 's',
+        (Holds_Frame (Got, Buf, "s"),
          "slow handshake: the frame behind it still arrives");
 
       Ws.Close (C);
@@ -834,7 +846,7 @@ package body Nuntius_Ws_Native_Client_Tests is
       Srv    : One_Frame_Server (Lead => 16#81#, Payload => Over_Bytes);
       C      : Over_Ws.Client;
       Buf    : String (1 .. 256);
-      Last   : Natural;
+      Got    : Nuntius.Ws.Reception;
       Ok     : Boolean;
       Port   : Port_Type;
    begin
@@ -852,8 +864,10 @@ package body Nuntius_Ws_Native_Client_Tests is
          Ok);
       Assert (Ok, "oversize: handshake completes");
 
-      Over_Ws.Receive (C, Buf, Last, Ok);
-      Assert (not Ok, "an oversized frame is reconnect-worthy");
+      Over_Ws.Receive (C, Buf, Got);
+      Assert
+        (Got.Outcome = Nuntius.Ws.Lost,
+         "an oversized frame is reconnect-worthy");
 
       Assert
         (Over_Ws.Losses (C).Oversized = 1,
@@ -880,7 +894,7 @@ package body Nuntius_Ws_Native_Client_Tests is
       Srv    : One_Frame_Server (Lead => 16#C1#, Payload => 5);
       C      : Over_Ws.Client;
       Buf    : String (1 .. 256);
-      Last   : Natural;
+      Got    : Nuntius.Ws.Reception;
       Ok     : Boolean;
       Port   : Port_Type;
    begin
@@ -898,8 +912,10 @@ package body Nuntius_Ws_Native_Client_Tests is
          Ok);
       Assert (Ok, "rsv1: handshake completes");
 
-      Over_Ws.Receive (C, Buf, Last, Ok);
-      Assert (not Ok, "an RSV1 frame on a plain socket is reconnect-worthy");
+      Over_Ws.Receive (C, Buf, Got);
+      Assert
+        (Got.Outcome = Nuntius.Ws.Lost,
+         "an RSV1 frame on a plain socket is reconnect-worthy");
       Assert (Over_Ws.Losses (C).Oversized = 0, "and it is not an oversize");
 
       Over_Ws.Close (C);
@@ -921,7 +937,7 @@ package body Nuntius_Ws_Native_Client_Tests is
       Srv    : Flood_Server;
       C      : Flood_Ws.Client;
       Buf    : String (1 .. 32);
-      Last   : Natural;
+      Got    : Nuntius.Ws.Reception;
       Ok     : Boolean;
       Port   : Port_Type;
    begin
@@ -942,8 +958,10 @@ package body Nuntius_Ws_Native_Client_Tests is
       --  One pop is enough: the whole burst arrived in a single recv and
       --  one Drain decoded all of it, so the refusals have already
       --  happened.
-      Flood_Ws.Receive (C, Buf, Last, Ok);
-      Assert (Ok, "the frames that DID fit are still delivered");
+      Flood_Ws.Receive (C, Buf, Got);
+      Assert
+        (Got.Outcome = Nuntius.Ws.Delivered,
+         "the frames that DID fit are still delivered");
 
       Assert
         (Flood_Ws.Losses (C).Dropped > 0,

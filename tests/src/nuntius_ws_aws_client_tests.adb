@@ -16,6 +16,8 @@ with Nuntius.Ws.Aws_Client;
 
 package body Nuntius_Ws_Aws_Client_Tests is
 
+   use type Nuntius.Ws.Receive_Outcome;
+
    use AUnit.Test_Cases.Registration;
 
    --  Small bounds: these tests never queue a frame, so only the type
@@ -32,6 +34,7 @@ package body Nuntius_Ws_Aws_Client_Tests is
       pragma Unreferenced (T);
       C     : Ws_Clients.Client;
       Buf   : String (1 .. 64);
+      Got   : Nuntius.Ws.Reception;
       Last  : Natural;
       Ok    : Boolean;
       Timed : Boolean;
@@ -39,9 +42,10 @@ package body Nuntius_Ws_Aws_Client_Tests is
       Ws_Clients.Send_Text (C, "hello", Ok);
       Assert (not Ok, "send before any dial reports Ok = False");
 
-      Ws_Clients.Receive (C, Buf, Last, Ok);
-      Assert (not Ok, "receive before any dial reports Ok = False");
-      Assert (Last = 0, "receive before any dial delivers nothing");
+      Ws_Clients.Receive (C, Buf, Got);
+      Assert
+        (Got.Outcome = Nuntius.Ws.Lost, "receive before any dial is lost");
+      Assert (Got.Last = 0, "receive before any dial delivers nothing");
 
       Ws_Clients.Receive_For (C, Buf, Last, 0.1, Ok, Timed);
       Assert

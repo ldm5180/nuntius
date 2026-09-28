@@ -22,15 +22,23 @@ package Nuntius.Ws is
      (Self : in out Transport; Payload : String; Ok : out Boolean)
    is abstract;
 
-   --  Block for the next inbound text frame, delivered in
-   --  Into (Into'First .. Last).  Ok False means closed, failed, a frame
-   --  too large for Into, or a stream silent past the adapter's idle
-   --  limit -- all reconnect-worthy.
+   --  How a receive ended.  Delivered: a frame is in Into.  Expired: a
+   --  patient wait ran out with the connection healthy -- not
+   --  reconnect-worthy.  Lost: closed, failed, a frame too large for
+   --  Into, or a stream silent past the adapter's idle limit -- all
+   --  reconnect-worthy.
+   type Receive_Outcome is (Delivered, Expired, Lost);
+
+   --  What one receive brought: the frame is Into (Into'First .. Last)
+   --  when Outcome is Delivered.
+   type Reception is record
+      Outcome : Receive_Outcome := Lost;
+      Last    : Natural := 0;
+   end record;
+
+   --  Block for the next inbound text frame: Delivered, or Lost.
    procedure Receive
-     (Self : in out Transport;
-      Into : out String;
-      Last : out Natural;
-      Ok   : out Boolean)
+     (Self : in out Transport; Into : out String; Got : out Reception)
    is abstract;
 
    --  Block for the next inbound text frame for at most Patience

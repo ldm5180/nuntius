@@ -246,21 +246,20 @@ package body Nuntius.Ws.Aws_Client is
 
    overriding
    procedure Receive
-     (Self : in out Client;
-      Into : out String;
-      Last : out Natural;
-      Ok   : out Boolean)
+     (Self : in out Client; Into : out String; Got : out Reception)
    is
+      Ok     : Boolean;
       Unused : Boolean;
    begin
       Wait_Frame
         (Self,
          Into,
-         Last,
+         Got.Last,
          Bounded   => False,
          Patience  => 0.0,
          Ok        => Ok,
          Timed_Out => Unused);
+      Got.Outcome := (if Ok then Delivered else Lost);
    end Receive;
 
    overriding

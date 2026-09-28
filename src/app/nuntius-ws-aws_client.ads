@@ -55,10 +55,7 @@ is
 
    overriding
    procedure Receive
-     (Self : in out Client;
-      Into : out String;
-      Last : out Natural;
-      Ok   : out Boolean);
+     (Self : in out Client; Into : out String; Got : out Reception);
 
    overriding
    procedure Receive_For
