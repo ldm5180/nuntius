@@ -61,23 +61,20 @@ package Nuntius.Http is
       Result        : out Response)
    is abstract;
 
-   --  A JSON POST with a Bearer token.  Location is the response's
-   --  Location header -- empty when absent -- because some APIs return a
-   --  created resource's id there, not in the (possibly empty) body.
+   --  A JSON POST with a Bearer token, and the one verb whose Result
+   --  carries the Location header: some APIs return a created
+   --  resource's id there, not in the (possibly empty) body.
    procedure Post_Json
      (Self          : in out Transport;
       URL           : String;
       Content       : String;
       Authorization : String;
-      Status        : out Natural;
-      Reply         : out Unbounded_String;
-      Location      : out Unbounded_String;
-      Ok            : out Boolean)
+      Result        : out Response)
    is abstract;
 
    --  A JSON PUT with a Bearer token: replace an existing resource.
    --
-   --  It returns no Location, and that asymmetry with Post_Json is the
+   --  Its Result has no Location, and that asymmetry with Post_Json is the
    --  point rather than an oversight -- a PUT names the resource in its
    --  own URL, so there is no created-resource location for the server
    --  to report.  What a replacement's response body says about it is

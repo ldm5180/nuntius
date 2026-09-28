@@ -97,10 +97,6 @@ package body Nuntius_Http_Curl_Tests is
    is
       pragma Unreferenced (T);
       Transport : Nuntius.Http.Curl.Curl_Transport;
-      Status    : Natural;
-      Reply     : Unbounded_String;
-      Location  : Unbounded_String;
-      Ok        : Boolean;
       Result    : Nuntius.Http.Response;
    begin
       Nuntius.Http.Curl.Register;
@@ -110,10 +106,12 @@ package body Nuntius_Http_Curl_Tests is
         (not Result.Ok and then Result.Status = 0,
          "refused POST form: Ok False");
 
-      Transport.Post_Json
-        (Refused_URL, "{}", "Bearer x", Status, Reply, Location, Ok);
-      Assert (not Ok and then Status = 0, "refused POST json: Ok False");
-      Assert (Location = Null_Unbounded_String, "no Location on failure");
+      Transport.Post_Json (Refused_URL, "{}", "Bearer x", Result);
+      Assert
+        (not Result.Ok and then Result.Status = 0,
+         "refused POST json: Ok False");
+      Assert
+        (Result.Location = Null_Unbounded_String, "no Location on failure");
 
       Transport.Put_Json (Refused_URL, "{}", "Bearer x", Result);
       Assert
