@@ -107,9 +107,7 @@ package Nuntius.Http is
      (Self          : in out Transport;
       URL           : String;
       Authorization : String;
-      Status        : out Natural;
-      Reply         : out Unbounded_String;
-      Ok            : out Boolean)
+      Result        : out Response)
    is abstract;
 
 end Nuntius.Http;

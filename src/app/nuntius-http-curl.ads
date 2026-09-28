@@ -54,8 +54,6 @@ package Nuntius.Http.Curl is
      (Self          : in out Curl_Transport;
       URL           : String;
       Authorization : String;
-      Status        : out Natural;
-      Reply         : out Unbounded_String;
-      Ok            : out Boolean);
+      Result        : out Response);
 
 end Nuntius.Http.Curl;

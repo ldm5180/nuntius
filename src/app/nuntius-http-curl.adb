@@ -20,6 +20,15 @@ package body Nuntius.Http.Curl is
       Client.Set_Header ("User-Agent", User_Agent);
    end Prepare;
 
+   --  A reply that arrived, as the port reports it: the exchange held,
+   --  with the server's status and body.  No Location; a verb that
+   --  reads one sets it itself.
+   function Answered (Reply : Util.Http.Clients.Response) return Response
+   is (Ok       => True,
+       Status   => Reply.Get_Status,
+       Reply    => To_Unbounded_String (Reply.Get_Body),
+       Location => Null_Unbounded_String);
+
    --  Post_Form sends form-encoded bodies (OAuth token endpoints); this is
    --  the Content-Type header that declares that encoding.
    Form_Content_Type : constant String := "application/x-www-form-urlencoded";
@@ -136,11 +145,7 @@ package body Nuntius.Http.Curl is
       Prepare (Client);
       Client.Set_Header ("Authorization", Authorization);
       Client.Get (URL, Reply);
-      Result :=
-        (Ok       => True,
-         Status   => Reply.Get_Status,
-         Reply    => To_Unbounded_String (Reply.Get_Body),
-         Location => Null_Unbounded_String);
+      Result := Answered (Reply);
    exception
       when others =>
          Result := (others => <>);
@@ -151,26 +156,19 @@ package body Nuntius.Http.Curl is
      (Self          : in out Curl_Transport;
       URL           : String;
       Authorization : String;
-      Status        : out Natural;
-      Reply         : out Unbounded_String;
-      Ok            : out Boolean)
+      Result        : out Response)
    is
       pragma Unreferenced (Self);
-      Client   : Util.Http.Clients.Client;
-      Response : Util.Http.Clients.Response;
+      Client : Util.Http.Clients.Client;
+      Reply  : Util.Http.Clients.Response;
    begin
       Prepare (Client);
       Client.Set_Header ("Authorization", Authorization);
-      Client.Delete (URL, Response);
-
-      Status := Response.Get_Status;
-      Reply := To_Unbounded_String (Response.Get_Body);
-      Ok := True;
+      Client.Delete (URL, Reply);
+      Result := Answered (Reply);
    exception
       when others =>
-         Status := 0;
-         Reply := Null_Unbounded_String;
-         Ok := False;
+         Result := (others => <>);
    end Delete;
 
 end Nuntius.Http.Curl;

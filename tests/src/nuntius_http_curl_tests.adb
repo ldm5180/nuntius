@@ -121,8 +121,9 @@ package body Nuntius_Http_Curl_Tests is
         (not Result.Ok and then Result.Status = 0, "refused GET: Ok False");
       Assert (Result.Reply = Null_Unbounded_String, "no reply on failure");
 
-      Transport.Delete (Refused_URL, "Bearer x", Status, Reply, Ok);
-      Assert (not Ok and then Status = 0, "refused DELETE: Ok False");
+      Transport.Delete (Refused_URL, "Bearer x", Result);
+      Assert
+        (not Result.Ok and then Result.Status = 0, "refused DELETE: Ok False");
    end Test_Refused_Connection;
 
    overriding
