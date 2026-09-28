@@ -29,6 +29,18 @@ package Nuntius.Http is
    procedure Set_User_Agent (Value : String)
    with Pre => Value'Length > 0, Post => User_Agent = Value;
 
+   --  One exchange's outcome.  Ok False is a transport-level failure
+   --  (connect, TLS, timeout), and then Status is 0 and Reply empty;
+   --  Status and Reply are the server's only when Ok is True.  Location
+   --  is the response's Location header, empty when absent -- some APIs
+   --  return a created resource's id there, not in the body.
+   type Response is record
+      Ok       : Boolean := False;
+      Status   : Natural := 0;
+      Reply    : Unbounded_String;
+      Location : Unbounded_String;
+   end record;
+
    type Transport is limited interface;
 
    --  Ok False means a transport-level failure (connect/TLS/timeout);
@@ -79,9 +91,7 @@ package Nuntius.Http is
      (Self          : in out Transport;
       URL           : String;
       Authorization : String;
-      Status        : out Natural;
-      Reply         : out Unbounded_String;
-      Ok            : out Boolean)
+      Result        : out Response)
    is abstract;
 
    --  A DELETE with a Bearer token.

@@ -24,26 +24,23 @@ procedure Http_Get is
    --  How much of the reply to show; enough to see what came back.
 
    Transport : Nuntius.Http.Curl.Curl_Transport;
-   Status    : Natural;
-   Reply     : Unbounded_String;
-   Ok        : Boolean;
+   Result    : Nuntius.Http.Response;
 
 begin
    Nuntius.Http.Curl.Register;
 
-   Transport.Get
-     (URL, Authorization => "", Status => Status, Reply => Reply, Ok => Ok);
+   Transport.Get (URL, Authorization => "", Result => Result);
 
-   if not Ok then
+   if not Result.Ok then
       Put_Line ("transport failure: could not reach " & URL);
       Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
       return;
    end if;
 
-   Put_Line ("HTTP" & Status'Image & " from " & URL);
+   Put_Line ("HTTP" & Result.Status'Image & " from " & URL);
 
    declare
-      Text : constant String := To_String (Reply);
+      Text : constant String := To_String (Result.Reply);
       Last : constant Natural :=
         Natural'Min (Text'Last, Text'First + Body_Head - 1);
    begin

@@ -53,9 +53,7 @@ package body Nuntius_Http_Curl_Tests is
       Listen    : GNAT.Sockets.Socket_Type;
       Port      : Natural;
       Transport : Nuntius.Http.Curl.Curl_Transport;
-      Status    : Natural;
-      Reply     : Unbounded_String;
-      Ok        : Boolean;
+      Result    : Nuntius.Http.Response;
    begin
       Nuntius.Http.Curl.Register;
       Nuntius.Http.Set_User_Agent ("probe/1.2");
@@ -65,15 +63,13 @@ package body Nuntius_Http_Curl_Tests is
       begin
          Srv.Serve (Listen);
          Transport.Get
-           (Loopback_Capture.Loopback_URL (Port, "/ua"),
-            "Bearer x",
-            Status,
-            Reply,
-            Ok);
+           (Loopback_Capture.Loopback_URL (Port, "/ua"), "Bearer x", Result);
       end;
       Nuntius.Http.Set_User_Agent (Old);
 
-      Assert (Ok and then Status = 200, "the loopback peer answered 200");
+      Assert
+        (Result.Ok and then Result.Status = 200,
+         "the loopback peer answered 200");
       Assert
         (Has (Loopback_Capture.Head, "User-Agent: probe/1.2" & CRLF),
          "the registered identity is on the wire: " & Loopback_Capture.Head);
@@ -88,6 +84,7 @@ package body Nuntius_Http_Curl_Tests is
       Reply     : Unbounded_String;
       Location  : Unbounded_String;
       Ok        : Boolean;
+      Result    : Nuntius.Http.Response;
    begin
       Nuntius.Http.Curl.Register;
 
@@ -102,8 +99,10 @@ package body Nuntius_Http_Curl_Tests is
       Transport.Put_Json (Refused_URL, "{}", "Bearer x", Status, Reply, Ok);
       Assert (not Ok and then Status = 0, "refused PUT json: Ok False");
 
-      Transport.Get (Refused_URL, "Bearer x", Status, Reply, Ok);
-      Assert (not Ok and then Status = 0, "refused GET: Ok False");
+      Transport.Get (Refused_URL, "Bearer x", Result);
+      Assert
+        (not Result.Ok and then Result.Status = 0, "refused GET: Ok False");
+      Assert (Result.Reply = Null_Unbounded_String, "no reply on failure");
 
       Transport.Delete (Refused_URL, "Bearer x", Status, Reply, Ok);
       Assert (not Ok and then Status = 0, "refused DELETE: Ok False");

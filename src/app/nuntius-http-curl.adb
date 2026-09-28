@@ -127,26 +127,23 @@ package body Nuntius.Http.Curl is
      (Self          : in out Curl_Transport;
       URL           : String;
       Authorization : String;
-      Status        : out Natural;
-      Reply         : out Unbounded_String;
-      Ok            : out Boolean)
+      Result        : out Response)
    is
       pragma Unreferenced (Self);
-      Client   : Util.Http.Clients.Client;
-      Response : Util.Http.Clients.Response;
+      Client : Util.Http.Clients.Client;
+      Reply  : Util.Http.Clients.Response;
    begin
       Prepare (Client);
       Client.Set_Header ("Authorization", Authorization);
-      Client.Get (URL, Response);
-
-      Status := Response.Get_Status;
-      Reply := To_Unbounded_String (Response.Get_Body);
-      Ok := True;
+      Client.Get (URL, Reply);
+      Result :=
+        (Ok       => True,
+         Status   => Reply.Get_Status,
+         Reply    => To_Unbounded_String (Reply.Get_Body),
+         Location => Null_Unbounded_String);
    exception
       when others =>
-         Status := 0;
-         Reply := Null_Unbounded_String;
-         Ok := False;
+         Result := (others => <>);
    end Get;
 
    overriding
