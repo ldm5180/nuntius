@@ -57,6 +57,12 @@ package body Nuntius_Http_Curl_Tests is
       Assert
         (not Succeeded ((Ok => False, Status => 200, others => <>)),
          "a failed transport");
+      Assert
+        (Reported_Status ((Ok => True, Status => 503, others => <>)) = 503,
+         "a reply's status is the server's");
+      Assert
+        (Reported_Status ((Ok => False, Status => 503, others => <>)) = 0,
+         "a failed exchange reports no status, whatever the record held");
    end Test_Succeeded;
 
    --  The registered identity is what the sync adapter puts on the

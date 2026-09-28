@@ -49,6 +49,12 @@ package Nuntius.Http is
    function Succeeded (R : Response) return Boolean
    is (R.Ok and then R.Status in Success_Status);
 
+   --  The status the server reported: R.Status when the exchange held,
+   --  0 when it did not -- a transport failure never reads as a status
+   --  a caller might retry on.
+   function Reported_Status (R : Response) return Natural
+   is (if R.Ok then R.Status else 0);
+
    type Transport is limited interface;
 
    --  Ok False means a transport-level failure (connect/TLS/timeout);
