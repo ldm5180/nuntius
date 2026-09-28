@@ -108,27 +108,20 @@ package body Nuntius.Http.Curl is
       URL           : String;
       Content       : String;
       Authorization : String;
-      Status        : out Natural;
-      Reply         : out Unbounded_String;
-      Ok            : out Boolean)
+      Result        : out Response)
    is
       pragma Unreferenced (Self);
-      Client   : Util.Http.Clients.Client;
-      Response : Util.Http.Clients.Response;
+      Client : Util.Http.Clients.Client;
+      Reply  : Util.Http.Clients.Response;
    begin
       Prepare (Client);
       Client.Set_Header ("Content-Type", Json_Content_Type);
       Client.Set_Header ("Authorization", Authorization);
-      Client.Put (URL, Content, Response);
-
-      Status := Response.Get_Status;
-      Reply := To_Unbounded_String (Response.Get_Body);
-      Ok := True;
+      Client.Put (URL, Content, Reply);
+      Result := Answered (Reply);
    exception
       when others =>
-         Status := 0;
-         Reply := Null_Unbounded_String;
-         Ok := False;
+         Result := (others => <>);
    end Put_Json;
 
    overriding
