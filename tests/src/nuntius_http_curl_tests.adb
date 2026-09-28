@@ -42,6 +42,23 @@ package body Nuntius_Http_Curl_Tests is
          "the default identity is nuntius/<version>: " & UA);
    end Test_Default_User_Agent;
 
+   --  A response succeeded when the transport held and the server said
+   --  2xx; a 2xx on a failed exchange, or a 3xx, is not success.
+   procedure Test_Succeeded (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      pragma Unreferenced (T);
+      use Nuntius.Http;
+   begin
+      Assert (Succeeded ((Ok => True, Status => 200, others => <>)), "200");
+      Assert (Succeeded ((Ok => True, Status => 299, others => <>)), "299");
+      Assert
+        (not Succeeded ((Ok => True, Status => 300, others => <>)), "300");
+      Assert
+        (not Succeeded ((Ok => True, Status => 199, others => <>)), "199");
+      Assert
+        (not Succeeded ((Ok => False, Status => 200, others => <>)),
+         "a failed transport");
+   end Test_Succeeded;
+
    --  The registered identity is what the sync adapter puts on the
    --  wire -- observed at a loopback peer, since libcurl (unlike the
    --  curl CLI) sends no User-Agent unless told to.
@@ -115,6 +132,10 @@ package body Nuntius_Http_Curl_Tests is
         (T,
          Test_Default_User_Agent'Access,
          "the crate names itself as the default User-Agent");
+      Register_Routine
+        (T,
+         Test_Succeeded'Access,
+         "a response succeeded on a held 2xx and nothing else");
       Register_Routine
         (T,
          Test_User_Agent_On_The_Wire'Access,

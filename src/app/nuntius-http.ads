@@ -41,6 +41,14 @@ package Nuntius.Http is
       Location : Unbounded_String;
    end record;
 
+   --  The 2xx statuses: a request the server carried out.
+   subtype Success_Status is Natural range 200 .. 299;
+
+   --  Whether R is a carried-out request: the exchange held and the
+   --  server answered 2xx.
+   function Succeeded (R : Response) return Boolean
+   is (R.Ok and then R.Status in Success_Status);
+
    type Transport is limited interface;
 
    --  Ok False means a transport-level failure (connect/TLS/timeout);
