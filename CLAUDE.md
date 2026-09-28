@@ -9,8 +9,10 @@ packaged as a reusable, independently proven crate.
 The ports are the product: exactly the shapes a REST-and-streaming
 application needs, and nothing else, so consumers test against scripted
 fakes fully offline and swap adapters without touching callers. Every
-operation reports `Ok : out Boolean` rather than raising; `Ok` False on the
-websocket port always means "reconnect-worthy".
+operation reports its outcome in one out parameter rather than raising --
+`Ok : out Boolean`, or a record that carries it (`Nuntius.Http.Response`,
+`Nuntius.Ws.Reception`); on the websocket port, `Ok` False and a `Lost`
+reception always mean "reconnect-worthy".
 
 ## Commands
 

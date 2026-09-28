@@ -59,12 +59,10 @@ is
 
    overriding
    procedure Receive_For
-     (Self      : in out Client;
-      Into      : out String;
-      Last      : out Natural;
-      Patience  : Duration;
-      Ok        : out Boolean;
-      Timed_Out : out Boolean);
+     (Self     : in out Client;
+      Into     : out String;
+      Patience : Duration;
+      Got      : out Reception);
 
    overriding
    procedure Close (Self : in out Client);

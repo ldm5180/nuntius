@@ -95,12 +95,10 @@ package body Nuntius_Ws_Native_Client_Tests is
 
    procedure Test_Unconnected (T : in out AUnit.Test_Cases.Test_Case'Class) is
       pragma Unreferenced (T);
-      C     : Ws.Client;
-      Buf   : String (1 .. 64);
-      Got   : Nuntius.Ws.Reception;
-      Last  : Natural;
-      Ok    : Boolean;
-      Timed : Boolean;
+      C   : Ws.Client;
+      Buf : String (1 .. 64);
+      Got : Nuntius.Ws.Reception;
+      Ok  : Boolean;
    begin
       Ws.Send_Text (C, "hello", Ok);
       Assert (not Ok, "send before any dial reports Ok = False");
@@ -108,9 +106,9 @@ package body Nuntius_Ws_Native_Client_Tests is
       Assert
         (Got.Outcome = Nuntius.Ws.Lost, "receive before any dial is lost");
       Assert (Got.Last = 0, "receive before any dial delivers nothing");
-      Ws.Receive_For (C, Buf, Last, 0.1, Ok, Timed);
+      Ws.Receive_For (C, Buf, 0.1, Got);
       Assert
-        (not Ok and then not Timed,
+        (Got.Outcome = Nuntius.Ws.Lost,
          "a timed receive before any dial is dead, never a timeout");
       Ws.Close (C);  --  harmless no-op
    end Test_Unconnected;
@@ -408,29 +406,28 @@ package body Nuntius_Ws_Native_Client_Tests is
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
-      Srv   : aliased Quiet_Server;
-      C     : Ws.Client;
-      Buf   : String (1 .. 256);
-      Last  : Natural;
-      Ok    : Boolean;
-      Timed : Boolean;
+      Srv : aliased Quiet_Server;
+      C   : Ws.Client;
+      Buf : String (1 .. 256);
+      Got : Nuntius.Ws.Reception;
+      Ok  : Boolean;
    begin
       Ws.Connect (C, Loop_Url (Serve_Quiet (Srv'Access, 1.5, True)), Ok);
       Assert (Ok, "handshake completes over loopback");
 
-      Ws.Receive_For (C, Buf, Last, 0.25, Ok, Timed);
+      Ws.Receive_For (C, Buf, 0.25, Got);
       Assert
-        (Ok and then Timed and then Last = 0,
+        (Got.Outcome = Nuntius.Ws.Expired and then Got.Last = 0,
          "a quiet quarter-second is a healthy timeout, not a death");
 
-      Ws.Receive_For (C, Buf, Last, 5.0, Ok, Timed);
+      Ws.Receive_For (C, Buf, 5.0, Got);
       Assert
-        (Ok and then not Timed and then Buf (1 .. Last) = "late",
+        (Holds_Frame (Got, Buf, "late"),
          "the late frame is delivered inside a patient wait");
 
-      Ws.Receive_For (C, Buf, Last, 5.0, Ok, Timed);
+      Ws.Receive_For (C, Buf, 5.0, Got);
       Assert
-        (not Ok and then not Timed, "peer close is dead, never a timeout");
+        (Got.Outcome = Nuntius.Ws.Lost, "peer close is dead, never a timeout");
       Ws.Close (C);
    end Test_Receive_For_Quiet;
 
@@ -446,9 +443,8 @@ package body Nuntius_Ws_Native_Client_Tests is
       Srv      : aliased Quiet_Server;
       C        : Idle_Ws.Client;
       Buf      : String (1 .. 256);
-      Last     : Natural;
+      Got      : Nuntius.Ws.Reception;
       Ok       : Boolean;
-      Timed    : Boolean;
       Timeouts : Natural := 0;
       Calls    : Natural := 0;
    begin
@@ -456,13 +452,16 @@ package body Nuntius_Ws_Native_Client_Tests is
       Assert (Ok, "handshake completes over loopback");
 
       for K in 1 .. 10 loop
-         Idle_Ws.Receive_For (C, Buf, Last, 0.25, Ok, Timed);
+         Idle_Ws.Receive_For (C, Buf, 0.25, Got);
          Calls := K;
-         exit when not Ok;
-         Timeouts := Timeouts + (if Timed then 1 else 0);
+         exit when Got.Outcome = Nuntius.Ws.Lost;
+         Timeouts :=
+           Timeouts + (if Got.Outcome = Nuntius.Ws.Expired then 1 else 0);
       end loop;
 
-      Assert (not Ok, "total silence past the idle limit is still dead");
+      Assert
+        (Got.Outcome = Nuntius.Ws.Lost,
+         "total silence past the idle limit is still dead");
       Assert
         (Timeouts >= 2,
          "with healthy timeouts before it; saw" & Timeouts'Image);

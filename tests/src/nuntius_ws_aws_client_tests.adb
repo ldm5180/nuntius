@@ -32,12 +32,10 @@ package body Nuntius_Ws_Aws_Client_Tests is
 
    procedure Test_Unconnected (T : in out AUnit.Test_Cases.Test_Case'Class) is
       pragma Unreferenced (T);
-      C     : Ws_Clients.Client;
-      Buf   : String (1 .. 64);
-      Got   : Nuntius.Ws.Reception;
-      Last  : Natural;
-      Ok    : Boolean;
-      Timed : Boolean;
+      C   : Ws_Clients.Client;
+      Buf : String (1 .. 64);
+      Got : Nuntius.Ws.Reception;
+      Ok  : Boolean;
    begin
       Ws_Clients.Send_Text (C, "hello", Ok);
       Assert (not Ok, "send before any dial reports Ok = False");
@@ -47,9 +45,9 @@ package body Nuntius_Ws_Aws_Client_Tests is
         (Got.Outcome = Nuntius.Ws.Lost, "receive before any dial is lost");
       Assert (Got.Last = 0, "receive before any dial delivers nothing");
 
-      Ws_Clients.Receive_For (C, Buf, Last, 0.1, Ok, Timed);
+      Ws_Clients.Receive_For (C, Buf, 0.1, Got);
       Assert
-        (not Ok and then not Timed,
+        (Got.Outcome = Nuntius.Ws.Lost,
          "a timed receive before any dial is dead, never a timeout");
 
       --  Closing a never-dialed client is a harmless no-op.

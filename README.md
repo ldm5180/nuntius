@@ -14,7 +14,8 @@ shipped here.
 - **`Nuntius.Http`** — the HTTP client port: a form-encoded `POST` (OAuth
   token endpoints), a JSON `POST` that captures the `Location` header (REST
   APIs that return a created resource's id there), and Bearer-authorized
-  `GET` / `DELETE`. Every call reports `Ok : out Boolean` instead of raising.
+  `GET` / `PUT` / `DELETE`. Every verb reports one `Response` (Ok, Status,
+  Reply, Location; `Succeeded` for a held 2xx) instead of raising.
 - **`Nuntius.Http.Curl`** — the production adapter over libcurl
   ([utilada](https://github.com/stcarrez/ada-util)), with request timeouts so
   a black-holed connection can never wedge a synchronous caller.

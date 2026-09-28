@@ -24,6 +24,8 @@ with Test_Payloads;
 
 package body Nuntius_Web_Server_Tests is
 
+   use type Nuntius.Ws.Receive_Outcome;
+
    use AUnit.Test_Cases.Registration;
 
    CRLF : constant String := ASCII.CR & ASCII.LF;
@@ -687,9 +689,8 @@ package body Nuntius_Web_Server_Tests is
       Port_Seen : Natural := 0;
       C         : Ws.Client;
       Buf       : String (1 .. 256);
-      Last      : Natural := 0;
       Ok        : Boolean := False;
-      Timed_Out : Boolean := False;
+      Rx        : Nuntius.Ws.Reception;
       Sock      : GNAT.Sockets.Socket_Type;
       Got       : Boolean := False;
       P         : Peers.Peer;
@@ -716,7 +717,7 @@ package body Nuntius_Web_Server_Tests is
                if Got then
                   Peers.Adopt (P, Sock);
                   Peers.Send_Text (P, Hello_Frame, Sent);
-                  Ws.Receive_For (C, Buf, Last, 2.0, Ok, Timed_Out);
+                  Ws.Receive_For (C, Buf, 2.0, Rx);
                end if;
             end if;
          end if;
@@ -732,7 +733,8 @@ package body Nuntius_Web_Server_Tests is
       Assert (Cells.Adopted = 1, "exactly once");
       Assert (Sent, "the peer wrote a frame on it");
       Assert
-        (Ok and then not Timed_Out and then Buf (1 .. Last) = Hello_Frame,
+        (Rx.Outcome = Nuntius.Ws.Delivered
+         and then Buf (1 .. Rx.Last) = Hello_Frame,
          "and the dialer read it back whole");
       Assert (Cells.Handled = 0, "Handle never saw the upgrade");
       Ws.Close (C);

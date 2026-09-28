@@ -436,14 +436,17 @@ package body Nuntius.Ws.Native_Client is
 
    overriding
    procedure Receive_For
-     (Self      : in out Client;
-      Into      : out String;
-      Last      : out Natural;
-      Patience  : Duration;
-      Ok        : out Boolean;
-      Timed_Out : out Boolean) is
+     (Self     : in out Client;
+      Into     : out String;
+      Patience : Duration;
+      Got      : out Reception)
+   is
+      Ok        : Boolean;
+      Timed_Out : Boolean;
    begin
-      Wait_Frame (Self, Into, Last, True, Patience, Ok, Timed_Out);
+      Wait_Frame (Self, Into, Got.Last, True, Patience, Ok, Timed_Out);
+      Got.Outcome :=
+        (if Timed_Out then Expired elsif Ok then Delivered else Lost);
    end Receive_For;
 
    ---------------
