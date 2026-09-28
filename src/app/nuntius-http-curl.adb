@@ -39,27 +39,20 @@ package body Nuntius.Http.Curl is
       URL           : String;
       Content       : String;
       Authorization : String;
-      Status        : out Natural;
-      Reply         : out Unbounded_String;
-      Ok            : out Boolean)
+      Result        : out Response)
    is
       pragma Unreferenced (Self);
-      Client   : Util.Http.Clients.Client;
-      Response : Util.Http.Clients.Response;
+      Client : Util.Http.Clients.Client;
+      Reply  : Util.Http.Clients.Response;
    begin
       Prepare (Client);
       Client.Set_Header ("Content-Type", Form_Content_Type);
       Client.Set_Header ("Authorization", Authorization);
-      Client.Post (URL, Content, Response);
-
-      Status := Response.Get_Status;
-      Reply := To_Unbounded_String (Response.Get_Body);
-      Ok := True;
+      Client.Post (URL, Content, Reply);
+      Result := Answered (Reply);
    exception
       when others =>
-         Status := 0;
-         Reply := Null_Unbounded_String;
-         Ok := False;
+         Result := (others => <>);
    end Post_Form;
 
    --  The API calls carry a JSON body (POST/PUT) or none (GET/DELETE)

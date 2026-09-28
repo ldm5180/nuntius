@@ -105,8 +105,10 @@ package body Nuntius_Http_Curl_Tests is
    begin
       Nuntius.Http.Curl.Register;
 
-      Transport.Post_Form (Refused_URL, "a=b", "Basic x", Status, Reply, Ok);
-      Assert (not Ok and then Status = 0, "refused POST form: Ok False");
+      Transport.Post_Form (Refused_URL, "a=b", "Basic x", Result);
+      Assert
+        (not Result.Ok and then Result.Status = 0,
+         "refused POST form: Ok False");
 
       Transport.Post_Json
         (Refused_URL, "{}", "Bearer x", Status, Reply, Location, Ok);

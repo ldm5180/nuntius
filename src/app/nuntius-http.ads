@@ -58,9 +58,7 @@ package Nuntius.Http is
       URL           : String;
       Content       : String;
       Authorization : String;
-      Status        : out Natural;
-      Reply         : out Unbounded_String;
-      Ok            : out Boolean)
+      Result        : out Response)
    is abstract;
 
    --  A JSON POST with a Bearer token.  Location is the response's

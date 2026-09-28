@@ -17,9 +17,7 @@ package Nuntius.Http.Curl is
       URL           : String;
       Content       : String;
       Authorization : String;
-      Status        : out Natural;
-      Reply         : out Unbounded_String;
-      Ok            : out Boolean);
+      Result        : out Response);
 
    overriding
    procedure Post_Json
