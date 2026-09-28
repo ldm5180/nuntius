@@ -410,18 +410,14 @@ package body Nuntius.Http.Fetch.Curl is
                   Best_Effort
                     (Getinfo_Long (Easy, Info_Response_Code, Code'Access));
                   Done :=
-                    (Id       => S.Id,
-                     Ok       => True,
-                     Status   => Natural (Code),
-                     Reply    => S.Reply,
-                     Location => S.Location);
+                    (Id     => S.Id,
+                     Result =>
+                       (Ok       => True,
+                        Status   => Natural (Code),
+                        Reply    => S.Reply,
+                        Location => S.Location));
                else
-                  Done :=
-                    (Id       => S.Id,
-                     Ok       => False,
-                     Status   => 0,
-                     Reply    => Null_Unbounded_String,
-                     Location => Null_Unbounded_String);
+                  Done := (Id => S.Id, Result => <>);
                end if;
             end;
             Got := True;

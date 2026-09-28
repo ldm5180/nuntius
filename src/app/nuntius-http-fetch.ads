@@ -1,7 +1,7 @@
 --  The ASYNC HTTP client port: fire-and-poll transfers for a consumer
 --  that must never wait on the network -- an event loop Starts a request
 --  (never blocking), keeps Pumping, and handles each Completion on a
---  later pass.  The verdict convention matches the sync port: Ok False
+--  later pass.  Each Completion carries the sync port's Response: Ok False
 --  is a transport-level failure (connect/TLS/timeout/overflow) with
 --  Status 0; an HTTP-level reply -- any status -- is Ok True.  Tests plug
 --  in a scripted fake; production plugs in Nuntius.Http.Fetch.Curl.
@@ -25,15 +25,11 @@ package Nuntius.Http.Fetch is
       Timeout_Ms    : Positive := 30_000;
    end record;
 
-   --  Location is the response's Location header -- empty when absent --
-   --  because some APIs return a created resource's id there, not in
-   --  the (possibly empty) body.
+   --  One finished exchange: the request it answers, and its Response
+   --  exactly as the sync port reports one.
    type Completion is record
-      Id       : Request_Id := No_Request;
-      Ok       : Boolean := False;
-      Status   : Natural := 0;
-      Reply    : Unbounded_String;
-      Location : Unbounded_String;
+      Id     : Request_Id := No_Request;
+      Result : Response;
    end record;
 
    type Client is limited interface;

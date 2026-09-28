@@ -116,7 +116,9 @@ package body Nuntius_Http_Fetch_Curl_Tests is
 
       Assert (Id /= No_Request, "the transfer started");
       Assert
-        (Got and then Done.Ok and then Done.Status = 200,
+        (Got
+         and then Nuntius.Http.Succeeded (Done.Result)
+         and then Done.Result.Status = 200,
          "the loopback peer answered 200");
       Assert
         (Has (Loopback_Capture.Head, "User-Agent: probe/1.2"),
@@ -166,10 +168,11 @@ package body Nuntius_Http_Fetch_Curl_Tests is
          Pump_Until (C, Done, Got);
          Assert (Got, "completion" & K'Image & " surfaced");
          Assert
-           (not Done.Ok and then Done.Status = 0,
+           (not Done.Result.Ok and then Done.Result.Status = 0,
             "a refused connect is Ok False / Status 0");
          Assert
-           (Done.Location = Null_Unbounded_String, "no Location on failure");
+           (Done.Result.Location = Null_Unbounded_String,
+            "no Location on failure");
          Seen := Seen + 1;
          Seen_Total := Seen_Total + Natural (Done.Id);
       end loop;
@@ -292,7 +295,7 @@ package body Nuntius_Http_Fetch_Curl_Tests is
       Elapsed := Since (T0);
       Assert (Got, "the refused transfer completed through pump/wait");
       Assert
-        (not Done.Ok and then Done.Status = 0,
+        (not Done.Result.Ok and then Done.Result.Status = 0,
          "as a transport failure (Ok False / Status 0)");
       Assert
         (Elapsed < 3.0,
