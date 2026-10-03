@@ -95,6 +95,7 @@ adapter uses — gnatprove analyses a generic only through its instances.
 make build    # build the library
 make test     # AUnit suite, both -O modes (loopback only, no network)
 make features # the Gherkin features in tests/features/, both -O modes
+make features-report # the living documentation, as CI publishes it
 make prove    # SPARK proof, --checks-as-errors=on
 make format   # gnatformat --check
 make example  # build the demo mains both ways (CI builds them, running is manual)
@@ -105,5 +106,9 @@ make help     # all targets
 The demo mains live in [example/src](example/src): `http_get [URL]` fetches a
 page over the curl adapter; `ws_listen WS_URL [PAYLOAD]` dials a websocket,
 optionally sends one subscribe frame, and prints the first inbound frames.
+
+What the transports do is stated as Gherkin features in
+[tests/features](tests/features), and published as living documentation
+at <https://ldm5180.github.io/nuntius/> from every push to main.
 
 Conventions (SPARK, strict TDD, commit style) live in [CLAUDE.md](CLAUDE.md).
