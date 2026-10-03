@@ -65,3 +65,15 @@ command = ["alr", "exec", "--", "gprbuild", "-p", "-j0", "-XMODE=debug", "-P", "
 [[actions]]
 type = "test"
 command = ["alr", "exec", "--", "tests/bin/debug/test_runner"]
+
+#  The Gherkin features, after the suite: each gprbuild above already
+#  built nuntius_features beside test_runner.  fabula exits 1 on any
+#  failed or undefined scenario; `make features` also checks the summary
+#  line, since a missing path or an empty file exits 0 by design.
+[[actions]]
+type = "test"
+command = ["alr", "exec", "--", "tests/bin/release/nuntius_features", "tests/features"]
+
+[[actions]]
+type = "test"
+command = ["alr", "exec", "--", "tests/bin/debug/nuntius_features", "tests/features"]
