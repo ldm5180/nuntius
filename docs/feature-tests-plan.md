@@ -692,3 +692,10 @@ session scratchpad, GNAT 15.2.0, gprbuild 26.0.1, 2026-10-03:
   the sequence, from the step's frame, rather than a path fixed to
   the repository root.  `Test_Payloads.Json_Like` rows are 37 bytes,
   not the 38 its comment said; every "2 280" here was 2 220.
+- **After implementation (2026-10-03):** the step code was refactored
+  so each feature's steps are an sml machine (`Nuntius_Steps.Flows`,
+  one child per feature, the registry a table of regions): case
+  statements became transition tables, ifs guards, bodies actions, and
+  a step taken out of order now fails naming every feature's state.
+  `make features` prints the runner's report as it goes.  Both are the
+  shape every later feature-tests plan starts from.
