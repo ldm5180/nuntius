@@ -1,7 +1,7 @@
 with Fabula.Check.Ints;
 with Fabula.Numbers;
 
-with Nuntius.Web;
+with Nuntius.Codings;
 
 with Nuntius_World;     use Nuntius_World;
 with Nuntius_World.Web; use Nuntius_World.Web;
@@ -44,6 +44,26 @@ package body Nuntius_Steps.Web is
          Fabula.Check.Fail (R, No_Loop_Text);
       end if;
    end Start;
+
+   --  The one target the world's loops take upgrades on.
+   Stream_Target : constant String := "/api/stream";
+
+   --  Start Kind's loop, which takes upgrades on Stream_Target only: a
+   --  feature naming another target asks for a loop the world lacks.
+   procedure Start_Upgrading
+     (Ctx    : in out World;
+      Kind   : Loop_Kind;
+      Target : String;
+      R      : in out Fabula.Check.Outcome) is
+   begin
+      if Target = Stream_Target then
+         Start (Ctx, Kind, R);
+      else
+         Fabula.Check.Fail
+           (R,
+            "the world's loops take upgrades on " & Stream_Target & " only");
+      end if;
+   end Start_Upgrading;
 
    ---------------------------------------------------------------------
    --  Sending.  A composed request waits in Ctx.Request until the first
@@ -123,53 +143,48 @@ package body Nuntius_Steps.Web is
    --  Checking.
    ---------------------------------------------------------------------
 
-   --  The status whose line starts with Code, if any.
-   procedure Find_Status
-     (Code : Natural; S : out Nuntius.Web.Status; Found : out Boolean)
-   is
-      Image     : constant String := Natural'Image (Code);
-      Digits_Of : constant String := Image (Image'First + 1 .. Image'Last);
-   begin
-      S := Nuntius.Web.Status'First;
-      Found := False;
-      for Candidate in Nuntius.Web.Status loop
-         declare
-            Line : constant String := Nuntius.Web.Status_Line (Candidate);
-         begin
-            if Line'Length > Digits_Of'Length
-              and then Line (Line'First .. Line'First + Digits_Of'Length - 1)
-                       = Digits_Of
-            then
-               S := Candidate;
-               Found := True;
-               return;
-            end if;
-         end;
-      end loop;
-   end Find_Status;
-
+   --  Whether the reply's status line carries Code.
    procedure Check_Status_Is
-     (Ctx : World; Code : Number; R : in out Fabula.Check.Outcome)
-   is
-      S     : Nuntius.Web.Status;
-      Found : Boolean;
+     (Ctx : World; Code : Number; R : in out Fabula.Check.Outcome) is
    begin
-      if not Code.Ok then
-         Fabula.Check.Ints.Fail_Read (R, Code.Error);
-         return;
-      end if;
-      Find_Status (Code.Value, S, Found);
-      if not Found then
-         Fabula.Check.Fail_Step (R, "no status" & Natural'Image (Code.Value));
-      else
+      if Code.Ok then
          Fabula.Check.Is_True
            (R,
             Has
               (To_String (Ctx.Reply),
-               "HTTP/1.1 " & Nuntius.Web.Status_Line (S)),
+               "HTTP/1.1" & Natural'Image (Code.Value) & " "),
             "the reply was: " & Head_Line (To_String (Ctx.Reply)));
+      else
+         Fabula.Check.Ints.Fail_Read (R, Code.Error);
       end if;
    end Check_Status_Is;
+
+   procedure Check_Coding (Coding : String; R : in out Fabula.Check.Outcome) is
+      use type Nuntius.Codings.Message_Coding;
+      Expected : Nuntius.Codings.Message_Coding;
+   begin
+      if not Await_Adoption then
+         Fabula.Check.Fail (R, "no socket was adopted");
+         return;
+      end if;
+      Expected := Nuntius.Codings.Message_Coding'Value (Coding);
+      Fabula.Check.Is_True
+        (R,
+         Cells.Adopted = 1 and then Cells.Kept_Coding = Expected,
+         "adopted"
+         & Natural'Image (Cells.Adopted)
+         & " time(s), "
+         & Nuntius.Codings.Message_Coding'Image (Cells.Kept_Coding));
+   exception
+      when Constraint_Error =>
+         Fabula.Check.Fail_Step (R, "no coding named " & Coding);
+   end Check_Coding;
+
+   procedure Upgrade (Ctx : in out World; Target, Offer : String) is
+   begin
+      Ctx.Reply :=
+        To_Unbounded_String (Upgrade_Reply (Ctx.Port, Offer, Target));
+   end Upgrade;
 
    procedure Execute
      (S   : Web_Step;
@@ -177,61 +192,98 @@ package body Nuntius_Steps.Web is
       A   : Fabula.Args.List;
       R   : in out Fabula.Check.Outcome) is
    begin
-      if S in Check_Status .. Check_Handled then
+      if S in Check_Status .. Check_No_Upgrade then
          Flush (Ctx);
       end if;
       case S is
-         when Start_Server       =>
+         when Start_Server         =>
             Start (Ctx, Plain_Loop, R);
 
-         when Start_Short_Server =>
+         when Start_Short_Server   =>
             Start (Ctx, Short_Loop, R);
 
-         when Send_Request       =>
+         when Start_Stream_Server  =>
+            Start_Upgrading
+              (Ctx, Stream_Loop, Fabula.Args.Word (A, First_Capture), R);
+
+         when Start_Deflate_Server =>
+            Start_Upgrading
+              (Ctx, Deflate_Loop, Fabula.Args.Word (A, First_Capture), R);
+
+         when Send_Request         =>
             Compose
               (Ctx,
                Fabula.Args.Word (A, First_Capture),
                Fabula.Args.Word (A, Second_Capture));
 
-         when Add_Header         =>
+         when Add_Header           =>
             Add_Line (Ctx, Fabula.Args.Text (A, First_Capture));
 
-         when Add_Body           =>
+         when Add_Body             =>
             Set_Body (Ctx, Fabula.Args.Text (A, First_Capture));
 
-         when Split_Body         =>
+         when Split_Body           =>
             Set_Tail (Ctx, Fabula.Args.Int (A, First_Capture), R);
 
-         when Send_Raw           =>
+         when Send_Raw             =>
             Send_Now (Ctx, Fabula.Args.Text (A, First_Capture) & CRLF & CRLF);
 
-         when Send_Half          =>
+         when Send_Half            =>
             Ctx.Reply :=
               To_Unbounded_String
                 (Exchange (Ctx.Port, "GET /x HT", Half_Head => True));
 
-         when Send_Dribble       =>
+         when Send_Dribble         =>
             Dribble_At (Ctx, Fabula.Args.Int (A, First_Capture), R);
 
-         when Check_Status       =>
+         when Send_Upgrade         =>
+            Upgrade (Ctx, Fabula.Args.Word (A, First_Capture), "");
+
+         when Send_Offer           =>
+            Upgrade
+              (Ctx,
+               Fabula.Args.Word (A, First_Capture),
+               Fabula.Args.Text (A, Second_Capture));
+
+         when Check_Status         =>
             Check_Status_Is (Ctx, Fabula.Args.Int (A, First_Capture), R);
 
-         when Check_Carries      =>
+         when Check_Carries        =>
             Fabula.Check.Is_True
               (R,
                Has
                  (To_String (Ctx.Reply), Fabula.Args.Text (A, First_Capture)),
                "the reply was: " & Head_Line (To_String (Ctx.Reply)));
 
-         when Check_Silent       =>
+         when Check_Lacks          =>
+            Fabula.Check.Is_False
+              (R,
+               Has
+                 (To_String (Ctx.Reply), Fabula.Args.Text (A, First_Capture)),
+               "the reply was: " & Head_Line (To_String (Ctx.Reply)));
+
+         when Check_Silent         =>
             Fabula.Check.Ints.Equal (R, Length (Ctx.Reply), 0, "reply bytes");
 
-         when Check_Handled      =>
+         when Check_Handled        =>
             Fabula.Check.Ints.Equal
               (R,
                Cells.Handled,
                Fabula.Args.Int (A, First_Capture),
                "handled");
+
+         when Check_Adopted        =>
+            Check_Coding (Fabula.Args.Word (A, First_Capture), R);
+
+         when Check_Not_Adopted    =>
+            Fabula.Check.Ints.Equal (R, Cells.Adopted, 0, "adopted");
+
+         when Check_Saw_Upgrade    =>
+            Fabula.Check.Is_True (R, Cells.Saw_Upgrade, "typed as an upgrade");
+
+         when Check_No_Upgrade     =>
+            Fabula.Check.Is_False
+              (R, Cells.Saw_Upgrade, "typed as an upgrade");
       end case;
    end Execute;
 

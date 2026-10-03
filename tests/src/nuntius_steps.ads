@@ -17,6 +17,8 @@ package Nuntius_Steps is
    type Step_Kind is
      (Start_Server,
       Start_Short_Server,
+      Start_Stream_Server,
+      Start_Deflate_Server,
       Send_Request,
       Add_Header,
       Add_Body,
@@ -24,12 +26,19 @@ package Nuntius_Steps is
       Send_Raw,
       Send_Half,
       Send_Dribble,
+      Send_Upgrade,
+      Send_Offer,
       Check_Status,
       Check_Carries,
+      Check_Lacks,
       Check_Silent,
-      Check_Handled);
+      Check_Handled,
+      Check_Adopted,
+      Check_Not_Adopted,
+      Check_Saw_Upgrade,
+      Check_No_Upgrade);
 
-   subtype Web_Step is Step_Kind range Start_Server .. Check_Handled;
+   subtype Web_Step is Step_Kind range Start_Server .. Check_No_Upgrade;
 
    type Hook_Kind is (Fresh_World, Stop_World);
 
@@ -62,6 +71,10 @@ package Nuntius_Steps is
      [Step ("a serving loop on loopback")                     >= Start_Server,
       Step ("a serving loop with a 1-second connection budget")
                                                               >= Start_Short_Server,
+      Step ("a serving loop that takes upgrades on {word}")
+                                                              >= Start_Stream_Server,
+      Step ("a serving loop that compresses when offered "
+            & "and takes upgrades on {word}")            >= Start_Deflate_Server,
       Step ("the client sends a {word} to {word}")            >= Send_Request,
       Step ("with header {string}")                           >= Add_Header,
       Step ("with the body arriving {int} ms later")          >= Split_Body,
@@ -69,11 +82,19 @@ package Nuntius_Steps is
       Step ("the client sends half a head and hangs up")      >= Send_Half,
       Step ("the client dribbles one byte every {int} ms")    >= Send_Dribble,
       Step ("the client sends {string}")                      >= Send_Raw,
+      Step ("the client upgrades to {word} offering {string}")
+                                                              >= Send_Offer,
+      Step ("the client upgrades to {word}")                  >= Send_Upgrade,
       Step ("the reply status is {int}")                      >= Check_Status,
+      Step ("the reply carries no {string}")                  >= Check_Lacks,
       Step ("the reply carries {string}")                     >= Check_Carries,
       Step ("the handler received {string}")                  >= Check_Carries,
       Step ("no reply arrives")                               >= Check_Silent,
-      Step ("the handler saw {int} request(s)")               >= Check_Handled];
+      Step ("the handler saw {int} request(s)")               >= Check_Handled,
+      Step ("the handler saw it as an upgrade")               >= Check_Saw_Upgrade,
+      Step ("the handler did not see an upgrade")             >= Check_No_Upgrade,
+      Step ("the socket was adopted {word}")                  >= Check_Adopted,
+      Step ("no socket was adopted")                          >= Check_Not_Adopted];
    --!format on
 
    Hook_Defs : constant Steps.Hook_Table :=

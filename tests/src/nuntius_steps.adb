@@ -33,6 +33,7 @@ package body Nuntius_Steps is
 
          when Stop_World  =>
             Nuntius_World.Web.Stop_Loops;
+            Nuntius_World.Web.Drop_Held;
       end case;
    end Run_Hook;
 
