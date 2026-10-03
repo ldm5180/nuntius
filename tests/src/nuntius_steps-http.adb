@@ -109,54 +109,54 @@ package body Nuntius_Steps.Http is
       R   : in out Fabula.Check.Outcome) is
    begin
       case S is
-         when Set_Agent                =>
+         when E_Set_Agent                =>
             Nuntius.Http.Set_User_Agent (Fabula.Args.Text (A, First_Capture));
 
-         when Curl_Refused             =>
+         when E_Curl_Refused             =>
             Send_Refused (Ctx, Fabula.Args.Word (A, First_Capture), R);
 
-         when Curl_Recorded            =>
+         when E_Curl_Recorded            =>
             Ctx.Client.Response := Recorded_Get;
 
-         when Fetch_Recorded           =>
+         when E_Fetch_Recorded           =>
             Recorded_Fetch (Ctx.Client.Done, Ctx.Client.Got);
 
-         when Fetch_Pump               =>
+         when E_Fetch_Pump               =>
             Async.Pump (Ctx.Client.Done, Ctx.Client.Got);
 
-         when Fetch_Start              =>
+         when E_Fetch_Start              =>
             Start_Refused (Ctx, Fabula.Args.Word (A, First_Capture), R);
 
-         when Fetch_Cancel             =>
+         when E_Fetch_Cancel             =>
             Async.Cancel (Ctx.Client.Id);
 
-         when Fetch_Until_Done         =>
+         when E_Fetch_Until_Done         =>
             Wait_For_Completion (Ctx);
 
-         when Fetch_Fill               =>
+         when E_Fetch_Fill               =>
             Fill (Ctx);
 
-         when Check_Response_Failure   =>
+         when E_Check_Response_Failure   =>
             Fabula.Check.Is_True
               (R,
                Failed (Ctx.Client.Response),
                Status_Text (Ctx.Client.Response));
 
-         when Check_Response_Status    =>
+         when E_Check_Response_Status    =>
             Fabula.Check.Ints.Equal
               (R,
                Nuntius.Http.Reported_Status (Ctx.Client.Response),
                Fabula.Args.Int (A, First_Capture),
                "status");
 
-         when Check_Wire               =>
+         when E_Check_Wire               =>
             Fabula.Check.Is_True
               (R,
                Has
                  (Loopback_Capture.Head, Fabula.Args.Text (A, First_Capture)),
                "the head was: " & Head_Line (Loopback_Capture.Head));
 
-         when Check_Completion_Status  =>
+         when E_Check_Completion_Status  =>
             Fabula.Check.Is_True (R, Ctx.Client.Got, "a completion surfaced");
             Fabula.Check.Ints.Equal
               (R,
@@ -164,31 +164,31 @@ package body Nuntius_Steps.Http is
                Fabula.Args.Int (A, First_Capture),
                "status");
 
-         when Check_No_Completion      =>
+         when E_Check_No_Completion      =>
             Fabula.Check.Is_False (R, Ctx.Client.Got, "a completion surfaced");
 
-         when Check_In_Flight          =>
+         when E_Check_In_Flight          =>
             Fabula.Check.Ints.Equal
               (R,
                Async.In_Flight,
                Fabula.Args.Int (A, First_Capture),
                "in flight");
 
-         when Check_Completion_Failure =>
+         when E_Check_Completion_Failure =>
             Fabula.Check.Is_True (R, Ctx.Client.Got, "a completion surfaced");
             Fabula.Check.Is_True
               (R,
                Failed (Ctx.Client.Done.Result),
                Status_Text (Ctx.Client.Done.Result));
 
-         when Check_Within             =>
+         when E_Check_Within             =>
             Check_Seconds (Ctx, Fabula.Args.Int (A, First_Capture), R);
 
-         when Check_Start_Refused      =>
+         when E_Check_Start_Refused      =>
             Fabula.Check.Is_True
               (R, Ctx.Client.Refused, "the start past the table's bound");
 
-         when Check_All_Complete       =>
+         when E_Check_All_Complete       =>
             Check_Drained (Ctx, R);
       end case;
    end Execute;

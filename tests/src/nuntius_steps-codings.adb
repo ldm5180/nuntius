@@ -86,23 +86,23 @@ package body Nuntius_Steps.Codings is
       R   : in out Fabula.Check.Outcome) is
    begin
       case S is
-         when Gzip_Json         =>
+         when E_Gzip_Json         =>
             Make (Ctx, Json, Gzipped, Fabula.Args.Int (A, First_Capture), R);
 
-         when Gzip_Noise        =>
+         when E_Gzip_Noise        =>
             Make (Ctx, Noise, Gzipped, Fabula.Args.Int (A, First_Capture), R);
 
-         when Pack_Json         =>
+         when E_Pack_Json         =>
             Make (Ctx, Json, Packed, Fabula.Args.Int (A, First_Capture), R);
 
-         when Check_Tenth       =>
+         when E_Check_Tenth       =>
             Fabula.Check.Ints.Less
               (R,
                Length (Ctx.Coding.Result),
                Length (Ctx.Coding.Text) / Tenth,
                "the result's length");
 
-         when Check_Gunzip_Back =>
+         when E_Check_Gunzip_Back =>
             Fabula.Check.Is_True
               (R,
                Test_Payloads.Gunzip
@@ -110,10 +110,10 @@ package body Nuntius_Steps.Codings is
                = To_String (Ctx.Coding.Text),
                "zlib read back the text");
 
-         when Check_Unpack_Back =>
+         when E_Check_Unpack_Back =>
             Check_Unpacks (Ctx, R);
 
-         when Check_Packed_Word =>
+         when E_Check_Packed_Word =>
             Check_Packed (Ctx, Fabula.Args.Word (A, First_Capture), R);
       end case;
    end Execute;

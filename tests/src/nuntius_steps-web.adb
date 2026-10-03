@@ -216,112 +216,112 @@ package body Nuntius_Steps.Web is
       A   : Fabula.Args.List;
       R   : in out Fabula.Check.Outcome) is
    begin
-      if S in Check_Status .. Check_Length_Matches then
+      if S in E_Check_Status .. E_Check_Length_Matches then
          Flush (Ctx);
       end if;
       case S is
-         when Start_Server         =>
+         when E_Start_Server         =>
             Start (Ctx, Plain_Loop, R);
 
-         when Start_Short_Server   =>
+         when E_Start_Short_Server   =>
             Start (Ctx, Short_Loop, R);
 
-         when Start_Stream_Server  =>
+         when E_Start_Stream_Server  =>
             Start_Upgrading
               (Ctx, Stream_Loop, Fabula.Args.Word (A, First_Capture), R);
 
-         when Start_Deflate_Server =>
+         when E_Start_Deflate_Server =>
             Start_Upgrading
               (Ctx, Deflate_Loop, Fabula.Args.Word (A, First_Capture), R);
 
-         when Start_Gzip_Server    =>
+         when E_Start_Gzip_Server    =>
             Start (Ctx, Gzip_Loop, R);
 
-         when Send_Request         =>
+         when E_Send_Request         =>
             Compose
               (Ctx,
                Fabula.Args.Word (A, First_Capture),
                Fabula.Args.Word (A, Second_Capture));
 
-         when Add_Header           =>
+         when E_Add_Header           =>
             Add_Line (Ctx, Fabula.Args.Text (A, First_Capture));
 
-         when Add_Body             =>
+         when E_Add_Body             =>
             Set_Body (Ctx, Fabula.Args.Text (A, First_Capture));
 
-         when Split_Body           =>
+         when E_Split_Body           =>
             Set_Tail (Ctx, Fabula.Args.Int (A, First_Capture), R);
 
-         when Send_Raw             =>
+         when E_Send_Raw             =>
             Send_Now (Ctx, Fabula.Args.Text (A, First_Capture) & CRLF & CRLF);
 
-         when Send_Half            =>
+         when E_Send_Half            =>
             Ctx.Reply :=
               To_Unbounded_String
                 (Exchange (Ctx.Port, "GET /x HT", Half_Head => True));
 
-         when Send_Dribble         =>
+         when E_Send_Dribble         =>
             Dribble_At (Ctx, Fabula.Args.Int (A, First_Capture), R);
 
-         when Send_Upgrade         =>
+         when E_Send_Upgrade         =>
             Upgrade (Ctx, Fabula.Args.Word (A, First_Capture), "");
 
-         when Send_Offer           =>
+         when E_Send_Offer           =>
             Upgrade
               (Ctx,
                Fabula.Args.Word (A, First_Capture),
                Fabula.Args.Text (A, Second_Capture));
 
-         when Check_Status         =>
+         when E_Check_Status         =>
             Check_Status_Is (Ctx, Fabula.Args.Int (A, First_Capture), R);
 
-         when Check_Carries        =>
+         when E_Check_Carries        =>
             Fabula.Check.Is_True
               (R,
                Has
                  (To_String (Ctx.Reply), Fabula.Args.Text (A, First_Capture)),
                "the reply was: " & Head_Line (To_String (Ctx.Reply)));
 
-         when Check_Lacks          =>
+         when E_Check_Lacks          =>
             Fabula.Check.Is_False
               (R,
                Has
                  (To_String (Ctx.Reply), Fabula.Args.Text (A, First_Capture)),
                "the reply was: " & Head_Line (To_String (Ctx.Reply)));
 
-         when Check_Silent         =>
+         when E_Check_Silent         =>
             Fabula.Check.Ints.Equal (R, Length (Ctx.Reply), 0, "reply bytes");
 
-         when Check_Handled        =>
+         when E_Check_Handled        =>
             Fabula.Check.Ints.Equal
               (R,
                Cells.Handled,
                Fabula.Args.Int (A, First_Capture),
                "handled");
 
-         when Check_Adopted        =>
+         when E_Check_Adopted        =>
             Check_Coding (Fabula.Args.Word (A, First_Capture), R);
 
-         when Check_Not_Adopted    =>
+         when E_Check_Not_Adopted    =>
             Fabula.Check.Ints.Equal (R, Cells.Adopted, 0, "adopted");
 
-         when Check_Saw_Upgrade    =>
+         when E_Check_Saw_Upgrade    =>
             Fabula.Check.Is_True (R, Cells.Saw_Upgrade, "typed as an upgrade");
 
-         when Check_No_Upgrade     =>
+         when E_Check_No_Upgrade     =>
             Fabula.Check.Is_False
               (R, Cells.Saw_Upgrade, "typed as an upgrade");
 
-         when Check_Gunzips        =>
+         when E_Check_Gunzips        =>
             Check_Gunzip (Ctx, R);
 
-         when Check_Big_Body       =>
+         when E_Check_Big_Body       =>
             Fabula.Check.Is_True
               (R,
                Body_Of (To_String (Ctx.Reply)) = Big_Json,
                "the body is the big JSON");
 
-         when Check_Length_Matches =>
+         when E_Check_Length_Matches =>
             Check_Length (Ctx, R);
       end case;
    end Execute;

@@ -294,70 +294,70 @@ package body Nuntius_Steps.Ws_Client is
       R   : in out Fabula.Check.Outcome) is
    begin
       case S is
-         when Ws_Default         =>
+         when E_Ws_Default         =>
             Clients.Choose_Default;
 
-         when Ws_Shaped          =>
+         when E_Ws_Shaped          =>
             Choose_Shape (A, R);
 
-         when Ws_Impatient       =>
+         when E_Ws_Impatient       =>
             Clients.Choose_Impatient;
 
-         when Start_Peer         =>
+         when E_Start_Peer         =>
             Start_From_Table (A, Peer_Port, R);
 
-         when Ws_Dial_Refused    =>
+         when E_Ws_Dial_Refused    =>
             Clients.Client.Connect (Refused_Url, Ctx.Ws.Dialed);
 
-         when Ws_Connect         =>
+         when E_Ws_Connect         =>
             Connect (Ctx, Peer_Port, R);
 
-         when Ws_Until_Lost      =>
+         when E_Ws_Until_Lost      =>
             Until_Lost (Ctx, Fabula.Args.Int (A, First_Capture), R);
 
-         when Ws_Receive_For     =>
+         when E_Ws_Receive_For     =>
             Patient (Ctx, Fabula.Args.Int (A, First_Capture), R);
 
-         when Ws_Receive_Many    =>
+         when E_Ws_Receive_Many    =>
             Burst (Ctx, Fabula.Args.Int (A, First_Capture), R);
 
-         when Ws_Receive         =>
+         when E_Ws_Receive         =>
             Receive (Ctx);
 
-         when Check_Dial_Failed  =>
+         when E_Check_Dial_Failed  =>
             Fabula.Check.Is_False (R, Ctx.Ws.Dialed, "the dial succeeded");
 
-         when Check_Reception    =>
+         when E_Check_Reception    =>
             Check_Outcome_Named (Ctx, Fabula.Args.Word (A, First_Capture), R);
 
-         when Check_Message      =>
+         when E_Check_Message      =>
             Fabula.Check.Text_Equal
               (R,
                To_String (Ctx.Ws.Message),
                Fabula.Args.Text (A, First_Capture));
 
-         when Check_Pong         =>
+         when E_Check_Pong         =>
             Fabula.Check.Is_True (R, Result.Pong_Seen, "the peer read a pong");
 
-         when Check_In_Order     =>
+         when E_Check_In_Order     =>
             Fabula.Check.Ints.Equal
               (R, Ctx.Ws.Received, Ctx.Ws.Wanted, "delivered");
             Fabula.Check.Is_True (R, Ctx.Ws.In_Order, "in order");
 
-         when Check_Dropped      =>
+         when E_Check_Dropped      =>
             Fabula.Check.Ints.Greater
               (R, Clients.Client.Losses.Dropped, 0, "dropped");
             Fabula.Check.Ints.Equal
               (R, Clients.Client.Losses.Oversized, 0, "oversized");
 
-         when Check_Oversized    =>
+         when E_Check_Oversized    =>
             Check_Oversize_Tally (A, R);
 
-         when Check_No_Oversized =>
+         when E_Check_No_Oversized =>
             Fabula.Check.Ints.Equal
               (R, Clients.Client.Losses.Oversized, 0, "oversized");
 
-         when Check_Lost_Within  =>
+         when E_Check_Lost_Within  =>
             Check_Lost_In (Ctx, A, R);
       end case;
    end Execute;
