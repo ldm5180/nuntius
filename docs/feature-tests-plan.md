@@ -146,10 +146,10 @@ them.  A reply is kept whole in the context (`Last_Reply`), and every
 | `a serving loop on loopback` | `Start_Server` | `Serve ("127.0.0.1", 0)` on the world's task; `Await_Port` |
 | `a serving loop that compresses when offered` | `Start_Gzip_Server` | the `Compress_When_Offered` instance |
 | `a serving loop whose {word} target takes upgrades` | `Start_Stream_Server` | the `Accepts_Upgrade`/`Adopt` instance |
-| `a serving loop with a {int}-second connection budget` | `Start_Short_Server` | `Connection_Seconds => N` (one instance per budget the features use) |
+| `a serving loop with a 1-second connection budget` | `Start_Short_Server` | the `Connection_Seconds => 1` instance, the only budget the features use |
 | `the client sends a {word} to {word}` | `Send_Request` | a well-formed head from method and target, sent at the first "Then" |
 | `with header {string}` | `Add_Header` | appended to the pending head |
-| `with a {int}-byte body` | `Add_Body` | `Content-Length` and a body of that size |
+| `with the body {}` | `Add_Body` | the rest of the line as the body, and its `Content-Length` |
 | `with the body arriving {int} ms later` | `Split_Body` | `Exchange`'s `Tail`/`Tail_Delay` |
 | `the client sends {string}` | `Send_Raw` | the text as the request line, then the blank line; no escapes |
 | `the client sends the lines:` + one-column table | `Send_Lines` | the rows joined by CRLF, then the blank line (section 3.2) |
@@ -157,12 +157,12 @@ them.  A reply is kept whole in the context (`Last_Reply`), and every
 | `the client sends half a head and hangs up` | `Send_Half` | `Exchange (..., Half_Head => True)` |
 | `the client dribbles one byte every {int} ms` | `Send_Dribble` | the dribble writer the suite has |
 | `the reply status is {int}` | `Check_Status` | `Has (Last_Reply, Status_Line (S))` by the number |
-| `the reply carries {string}` | `Check_Header` | substring of the head |
+| `the reply carries {string}` | `Check_Carries` | substring of the reply |
+| `the handler received {string}` | `Check_Carries` | the same check, read as the echo |
 | `the reply carries no {word} header` | `Check_No_Header` | its absence |
 | `the reply body is the gzip of the payload` | `Check_Gunzip` | `Test_Payloads.Gunzip (Body_Of (Last_Reply))` |
 | `no reply arrives` | `Check_Silent` | `Last_Reply'Length = 0` |
 | `the handler saw {int} request(s)` | `Check_Handled` | `Cells.Handled` |
-| `the handler received {string}` | `Check_Echo` | the `hi:METHOD:target:body` echo |
 | `the socket was adopted {word}` | `Check_Adopted` | `Cells.Adopted = 1` and `Kept_Coding` is `plain`/`deflated` |
 | `a refused loopback port` | `Use_Refused` | `http://127.0.0.1:9/` |
 | `the curl client {word}s {word}` | `Curl_Verb` | `Nuntius.Http.Curl` by verb; `Response` kept |
@@ -392,7 +392,7 @@ step knows.  Three forms, chosen by what the reader should see:
 
     Scenario: A GET that brought a body is refused unread
       When the client sends a GET to /x
-      And with a 5-byte body
+      And with the body abcde
       Then the reply status is 400
       And the reply carries "no body on GET"
 
@@ -403,22 +403,23 @@ step knows.  Three forms, chosen by what the reader should see:
 
     Scenario: A body over the cap is refused before it is read
       When the client sends a POST to /api/close
-      And with a 5000-byte body
+      And with header "Content-Length: 5000"
       Then the reply status is 413
       And the reply carries "body too large"
 
     Scenario: A JSON POST reaches the handler with its body
       When the client sends a POST to /api/close
       And with header "Content-Type: application/json"
-      And with a 15-byte body
+      And with the body {"scope":"all"}
       Then the reply status is 200
-      And the handler received "hi:POST:/api/close:"
+      And the handler received "hi:POST:/api/close:{"
 
     Scenario: A body that arrives in a second write still reaches the handler
       When the client sends a POST to /api/close
-      And with a 15-byte body
+      And with the body {"scope":"all"}
       And with the body arriving 200 ms later
-      Then the handler saw 1 request
+      Then the reply status is 200
+      And the handler saw 1 request
 
     Scenario: Half a head, then a hangup, is dropped quietly
       When the client sends half a head and hangs up
@@ -639,3 +640,9 @@ session scratchpad, GNAT 15.2.0, gprbuild 26.0.1, 2026-10-03:
   rather than one JSON document, since this crate withs no JSON
   reader), the `bytes/` directory, the `bytes <name>` frame kind, and
   F7's first named sequence.
+- **During F3 (2026-10-03):** fabula's `{string}` is double-quoted
+  only, so a JSON body cannot be a quoted capture; `with the body {}`
+  takes the rest of the line verbatim instead of `with a {int}-byte
+  body`.  The 413 scenario sends `Content-Length: 5000` and no body --
+  the claim is what the loop refuses, as the unit test always sent
+  it.  The connection-budget step names the one budget that exists.
