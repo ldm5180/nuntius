@@ -95,6 +95,54 @@ jobs:
         # against the ports forever.
         run: make example
 
+      - name: Set up node for the living documentation
+        if: success() || failure()
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tools/features-report/package-lock.json
+
+      - name: Render the living documentation
+        # The features (release) with --report-json, rendered by
+        # multiple-cucumber-html-reporter.  Rendered even when a scenario
+        # failed -- the page is then the best account of what broke.
+        if: success() || failure()
+        run: make features-report
+
+      - name: Keep the living documentation with the run
+        if: success() || failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: features-report
+          path: obj/features-report/html
+          if-no-files-found: ignore
+
+      - name: Stage the living documentation for GitHub Pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: obj/features-report/html
+
+  # The living documentation, published from main: what the transports
+  # do, as the features state it, at https://ldm5180.github.io/nuntius/.
+  pages:
+    name: Publish the living documentation
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v5
+
   proof:
     name: SPARK proof
     runs-on: ubuntu-latest
