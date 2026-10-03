@@ -101,7 +101,7 @@ live at library level in `Nuntius_World`, reset by `Before` and
 stopped by `After`.
 
 Two fabula limits matter.  `Fabula.Limits.Max_Line_Length` is 2 048,
-so a 2 280-byte JSON body cannot be a feature-file line: a step
+so a 2 220-byte JSON body cannot be a feature-file line: a step
 generates it (`a {int}-row JSON body`, over `Test_Payloads.Json_Like`).
 And `Max_Message_Length` is 512, so a failed check that quotes a whole
 reply is truncated; a step quotes the status line, not the body.
@@ -159,7 +159,6 @@ them.  A reply is kept whole in the context (`Last_Reply`), and every
 | `with the body arriving {int} ms later` | `Split_Body` | `Exchange`'s `Tail`/`Tail_Delay` |
 | `the client sends {string}` | `Send_Raw` | the text as the request line, then the blank line; no escapes |
 | `the client sends the lines:` + one-column table | `Send_Lines` | the rows joined by CRLF, then the blank line (section 3.2) |
-| `the client sends the bytes named {word}` | `Send_Named_Bytes` | `tests/features/bytes/<name>.hex`, decoded, sent verbatim (section 3.2) |
 | `the client sends half a head and hangs up` | `Send_Half` | `Exchange (..., Half_Head => True)` |
 | `the client dribbles one byte every {int} ms` | `Send_Dribble` | the dribble writer the suite has |
 | `the reply status is {int}` | `Check_Status` | `HTTP/1.1 <code> ` in the reply (the 101 is no `Nuntius.Web.Status`) |
@@ -185,12 +184,19 @@ them.  A reply is kept whole in the context (`Last_Reply`), and every
 | `the message is {string}` | `Check_Message` | the delivered text |
 | `the peer saw a pong` | `Check_Pong` | `Result.Pong_Seen` |
 | `the losses report {int} dropped and {int} oversized` | `Check_Losses` | `Losses (C)` |
-| `a websocket pair` | `Pair_Sockets` | `Pair (Browser, Served)`; the peer adopts `Served` |
-| `the browser sends {string}` | `Browser_Text` | one masked text frame |
-| `the browser sends a {word} frame` | `Browser_Control` | `ping`/`close`/`binary`/`rsv1`/`oversize` |
-| `the peer pumps` | `Peer_Pump` | `Pump (Readable => True)`; the outcome kept |
-| `the pump outcome is {word}` | `Check_Pump` | `Nothing`/`Message`/`Closed`/`Faulted` |
-| `the browser reads a {word} frame` | `Check_Frame` | opcode of the next frame on the browser end, unmasked |
+| `a websocket pair` / `a deflated websocket pair` | `Pair_Plain` / `Pair_Deflated` | `Open_Pair`: the peer adopts the served end, plain or deflated |
+| `the peer sends {string}` / `a {int}-byte message` / `{int} bytes of JSON, packed` | `Peer_Send_*` | `Send_Text`, or `Send_Packed` with what `Deflate.Pack` made |
+| `the browser sends the text {}` | `Browser_Json` | one masked text frame, the rest of the line |
+| `the browser sends a ping {string}` / `a close with code {int}` | `Browser_Ping` / `Browser_Close` | masked control frames |
+| `the browser sends a {int}-byte text message` / `a binary frame` / `a text frame with RSV1 set` / `a ping with RSV1 set` | `Browser_*` | the frames the peer must refuse |
+| `the browser sends {int} bytes of JSON, packed` / `{int} zeros, packed` | `Browser_Packed_*` | an RSV1 frame of `Deflate.Pack`'s output |
+| `the browser sends the bytes named {word} as a packed frame` | `Browser_Named` | a named sequence (3.2) as an RSV1 frame |
+| `the browser hangs up` | `Browser_Hangs_Up` | close the browser end |
+| `the peer pumps` | `Peer_Pump` | `Pump (Readable => True)`; the outcome and message kept |
+| `the pump outcome is {word}` | `Check_Pump` | `nothing`/`message`/`closed`/`faulted` |
+| `the peer read what the browser sent` | `Check_Read_Sent` | the pumped message is the sent text |
+| `the browser reads a text frame {string}` / `of {int} bytes` / `a pong {string}` / `a close with code {int}` / `a packed frame of what the peer packed` | `Check_*_Frame` | `Read_Server_Frame`: first byte, mask bit clear, payload |
+| `the peer is shut` / `a send from the peer fails` | `Check_Shut` / `Check_Send_Fails` | `Is_Open`, `Send_Text`'s Ok |
 | `a {int}-row JSON body` | `Make_Json` | `Test_Payloads.Json_Like (N)` into the context |
 | `{int} bytes of noise` | `Make_Noise` | `Test_Payloads.Noise (N)` |
 | `gzipped and gunzipped it reads back` | `Check_Gzip_Trip` | `Deflate.Gzip` then `Test_Payloads.Gunzip` |
@@ -257,8 +263,8 @@ step knows.  Three forms, chosen by what the reader should see:
 - **Anything else is a named sequence on disk.**
   `tests/features/bytes/<name>.hex` holds one sequence as hex pairs,
   whitespace-separated, `#` to end of line a comment, and a step
-  names it (`the client sends the bytes named half-head`; a frame
-  row `bytes rsv1-fragment`).  A file per name rather than one JSON
+  names it (`the browser sends the bytes named corrupt-deflate as a
+  packed frame`).  A file per name rather than one JSON
   document of them, because this crate withs no JSON reader and a
   hand parser in test code would be a worse smell than the escapes
   were; because a `.hex` diff is reviewable where a `.bin` is not;
@@ -266,7 +272,8 @@ step knows.  Three forms, chosen by what the reader should see:
   step by name.  fructus, which has `lector`, may keep its sequences
   in one JSON file under the same rule: the feature names the bytes,
   it never spells them.  The reader is `Nuntius_World.Named_Bytes
-  (Name) return Rfc6455.Octets`, a dozen lines over `Ada.Text_IO`.
+  (Dir, Name, Result, Last, Ok)` over `Ada.Text_IO`, Dir being the
+  feature file's own directory plus `/bytes`.
 
 ## 4. Items
 
@@ -625,7 +632,7 @@ session scratchpad, GNAT 15.2.0, gprbuild 26.0.1, 2026-10-03:
   replaced.
 - **Iteration 2 (as a newcomer):** added the three up-front
   decisions and the "Do not" list, section 1 with the two fabula
-  limits that bite here (a 2 280-byte body is not a feature line; a
+  limits that bite here (a 2 220-byte body is not a feature line; a
   512-byte failure message does not hold a reply), the frame table
   (3.1), a full Gherkin sketch for F3 and the Makefile for F1, the
   `@slow` tag for the two idle-limit scenarios, and a RED per item.
@@ -673,3 +680,9 @@ session scratchpad, GNAT 15.2.0, gprbuild 26.0.1, 2026-10-03:
   simpler, and it keeps the glued-burst case; `bytes <name>` is not
   needed by any client scenario and waits for F7.  The client's shape
   is chosen by sentence from the instances the world has.
+- **During F7 (2026-10-03):** a JSON text with quotes is a rest-of-
+  line capture (`the browser sends the text {}`), as F3's bodies are.
+  `Named_Bytes` takes the directory of the feature file that names
+  the sequence, from the step's frame, rather than a path fixed to
+  the repository root.  `Test_Payloads.Json_Like` rows are 37 bytes,
+  not the 38 its comment said; every "2 280" here was 2 220.
