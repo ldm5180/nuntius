@@ -1,0 +1,11 @@
+{
+  "name": "nuntius-features-report",
+  "private": true,
+  "description": "Turns the fabula feature runner's Cucumber JSON into the living documentation published to GitHub Pages.",
+  "scripts": {
+    "report": "node report.js"
+  },
+  "dependencies": {
+    "multiple-cucumber-html-reporter": "^3.9.0"
+  }
+}

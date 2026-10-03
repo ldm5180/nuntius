@@ -5,7 +5,7 @@
 
 EX := -P example/example.gpr
 
-.PHONY: all build test features prove format example release debug run clean help
+.PHONY: all build test features features-report prove format example release debug run clean help
 
 all: build
 
@@ -43,6 +43,21 @@ features:
 	    grep -qE '^[1-9][0-9]* Scenarios? \([0-9]+ passed\)$$' || \
 	    { echo "features: $$mode: a scenario did not pass"; exit 1; }; \
 	done; echo 'features: every scenario passed in both modes'
+
+## features-report  The living documentation: run the features (release)
+##             with --report-json and render it into
+##             obj/features-report/html with multiple-cucumber-html-reporter
+##             (tools/features-report).  The page is made even when a
+##             scenario fails -- that is when it is most worth reading --
+##             and the target then fails with the runner.
+features-report:
+	alr exec -- gprbuild -p -j0 -XMODE=release -P tests/test_nuntius.gpr
+	@rm -rf obj/features-report && mkdir -p obj/features-report/json
+	@alr exec -- tests/bin/release/nuntius_features tests/features \
+	   --report-json obj/features-report/json/features.json; rc=$$?; \
+	 npm ci --prefix tools/features-report --no-audit --no-fund && \
+	 node tools/features-report/report.js obj/features-report/json \
+	   obj/features-report/html && exit $$rc
 
 ## prove       Run the SPARK proof (same flags as CI)
 prove:
