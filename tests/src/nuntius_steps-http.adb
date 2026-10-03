@@ -43,7 +43,9 @@ package body Nuntius_Steps.Http is
       A_Check_Within,
       A_Refuse_Limit,
       A_Check_Start_Refused,
-      A_Check_All_Complete);
+      A_Check_All_Complete,
+      A_Check_Response_Empty,
+      A_Check_Slots_Taken);
 
    First_Capture : constant := 1;
 
@@ -249,6 +251,27 @@ package body Nuntius_Steps.Http is
 
          when A_Check_All_Complete       =>
             Check_Drained (Ctx);
+
+         when A_Check_Response_Empty     =>
+            Fabula.Check.Ints.Equal
+              (Ctx.R, Length (Ctx.W.Client.Response.Reply), 0, "reply bytes");
+            Fabula.Check.Ints.Equal
+              (Ctx.R,
+               Length (Ctx.W.Client.Response.Location),
+               0,
+               "location bytes");
+
+         when A_Check_Slots_Taken        =>
+            Fabula.Check.Ints.Equal
+              (Ctx.R,
+               Ctx.W.Client.Started,
+               Nuntius.Http.Fetch.Curl.Max_In_Flight,
+               "slots started");
+            Fabula.Check.Ints.Equal
+              (Ctx.R,
+               Async.In_Flight,
+               Nuntius.Http.Fetch.Curl.Max_In_Flight,
+               "in flight");
       end case;
    end Execute;
 
@@ -291,6 +314,8 @@ package body Nuntius_Steps.Http is
    Check_Within             : constant Ev := (Kind => E_Check_Within);
    Check_Start_Refused      : constant Ev := (Kind => E_Check_Start_Refused);
    Check_All_Complete       : constant Ev := (Kind => E_Check_All_Complete);
+   Check_Response_Empty     : constant Ev := (Kind => E_Check_Response_Empty);
+   Check_Slots_Taken        : constant Ev := (Kind => E_Check_Slots_Taken);
 
    --!format off
    Table : constant Transition_Table :=
@@ -306,6 +331,7 @@ package body Nuntius_Steps.Http is
       Responded + Check_Response_Failure     / A_Check_Response_Failure   >= Responded,
       Responded + Check_Response_Status      / A_Check_Response_Status    >= Responded,
       Responded + Check_Wire                 / A_Check_Wire               >= Responded,
+      Responded + Check_Response_Empty       / A_Check_Response_Empty     >= Responded,
       Started   + Fetch_Cancel               / A_Cancel                   >= Started,
       Started   + Fetch_Pump                 / A_Pump                     >= Completed,
       Started   + Fetch_Until_Done           / A_Wait                     >= Completed,
@@ -318,6 +344,7 @@ package body Nuntius_Steps.Http is
       Completed + Check_Within (Limit_Read)  / A_Check_Within             >= Completed,
       Completed + Check_Within               / A_Refuse_Limit             >= Completed,
       Filled    + Check_Start_Refused        / A_Check_Start_Refused      >= Filled,
+      Filled    + Check_Slots_Taken          / A_Check_Slots_Taken        >= Filled,
       Filled    + Check_All_Complete         / A_Check_All_Complete       >= Filled];
    --!format on
 

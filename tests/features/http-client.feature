@@ -8,6 +8,7 @@ Feature: The HTTP clients report every failure and never raise
   Scenario Outline: A refused connection is a transport failure on every verb
     When the curl client sends a <verb> to a refused loopback port
     Then the response is a transport failure
+    And the response carries no reply and no location
 
     Examples:
       | verb      |
@@ -36,7 +37,8 @@ Feature: The HTTP clients report every failure and never raise
 
   Scenario: A cancelled transfer never surfaces
     When the async client starts a GET to a refused loopback port
-    And the async client cancels it
+    Then the async client has 1 transfer in flight
+    When the async client cancels it
     And the async client pumps once
     Then no completion surfaced
     And the async client has 0 transfers in flight
@@ -50,4 +52,5 @@ Feature: The HTTP clients report every failure and never raise
   Scenario: The in-flight table is bounded
     When the async client fills its table with GETs to a refused loopback port
     Then one more start is refused
+    And every slot of the table was taken
     And every started transfer completes

@@ -25,6 +25,7 @@ Feature: A websocket upgrade is adopted or refused
     Then the reply status is 426
     And the reply carries "Upgrade: websocket"
     And no socket was adopted
+    And the handler saw 1 request
     And the handler did not see an upgrade
 
   Scenario: A deflate offer is agreed, and Adopt is told
