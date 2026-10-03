@@ -280,10 +280,64 @@ package body Nuntius_World.Web is
    procedure Serve_Deflate (Bind : String; Port : Natural)
    renames Serve_Deflate_Loop;
 
-   --  One serial exchange: connect, send Request_Text, read to the
-   --  server's Connection: close.  Half_Head sends without the blank
-   --  line and closes our write side instead; Tail is sent after
-   --  Tail_Delay, so a body can arrive in a second write.
+   --  A client socket connected to 127.0.0.1:Port; Timeout, when not
+   --  zero, bounds every read on it.
+   function Dial
+     (Port : Natural; Timeout : Duration := 0.0)
+      return GNAT.Sockets.Socket_Type
+   is
+      use GNAT.Sockets;
+      Sock : Socket_Type;
+   begin
+      Create_Socket (Sock);
+      if Timeout > 0.0 then
+         Set_Socket_Option
+           (Sock, Socket_Level, (Name => Receive_Timeout, Timeout => Timeout));
+      end if;
+      Connect_Socket
+        (Sock,
+         (Family => Family_Inet,
+          Addr   => Inet_Addr ("127.0.0.1"),
+          Port   => GNAT.Sockets.Port_Type (Port)));
+      return Sock;
+   end Dial;
+
+   --  Text's characters as bytes on Sock, in one send.
+   procedure Send_Text (Sock : GNAT.Sockets.Socket_Type; Text : String) is
+      Buf  : Ada.Streams.Stream_Element_Array (1 .. Text'Length);
+      Last : Ada.Streams.Stream_Element_Offset;
+   begin
+      for K in Text'Range loop
+         Buf (Ada.Streams.Stream_Element_Offset (K - Text'First + 1)) :=
+           Ada.Streams.Stream_Element (Character'Pos (Text (K)));
+      end loop;
+      GNAT.Sockets.Send_Socket (Sock, Buf, Last);
+   end Send_Text;
+
+   --  Everything Sock delivers until the peer closes or a read fails,
+   --  then the socket closed.
+   function Read_To_Close (Sock : GNAT.Sockets.Socket_Type) return String is
+      use type Ada.Streams.Stream_Element_Offset;
+      Reply : Unbounded_String;
+      Chunk : Ada.Streams.Stream_Element_Array (1 .. 1_024);
+      Last  : Ada.Streams.Stream_Element_Offset;
+   begin
+      loop
+         begin
+            GNAT.Sockets.Receive_Socket (Sock, Chunk, Last);
+         exception
+            when GNAT.Sockets.Socket_Error =>
+               exit;
+         end;
+         exit when Last < Chunk'First;
+         for K in 1 .. Last loop
+            Append (Reply, Character'Val (Chunk (K)));
+         end loop;
+      end loop;
+      GNAT.Sockets.Close_Socket (Sock);
+      return To_String (Reply);
+   end Read_To_Close;
+
    function Exchange
      (Port         : Natural;
       Request_Text : String;
@@ -291,113 +345,39 @@ package body Nuntius_World.Web is
       Tail         : String := "";
       Tail_Delay   : Duration := 0.0) return String
    is
-      use GNAT.Sockets;
-      use type Ada.Streams.Stream_Element_Offset;
-
-      Sock  : Socket_Type;
-      Addr  : constant Sock_Addr_Type :=
-        (Family => Family_Inet,
-         Addr   => Inet_Addr ("127.0.0.1"),
-         Port   => Port_Type (Port));
-      Reply : Unbounded_String;
-
-      procedure Send_Text (Text : String) is
-         Buf  : Ada.Streams.Stream_Element_Array (1 .. Text'Length);
-         Last : Ada.Streams.Stream_Element_Offset;
-      begin
-         for K in Text'Range loop
-            Buf (Ada.Streams.Stream_Element_Offset (K - Text'First + 1)) :=
-              Ada.Streams.Stream_Element (Character'Pos (Text (K)));
-         end loop;
-         Send_Socket (Sock, Buf, Last);
-      end Send_Text;
+      Sock : constant GNAT.Sockets.Socket_Type := Dial (Port);
    begin
-      Create_Socket (Sock);
-      Connect_Socket (Sock, Addr);
-      Send_Text (Request_Text);
+      Send_Text (Sock, Request_Text);
       if Half_Head then
-         Shutdown_Socket (Sock, Shut_Write);
+         GNAT.Sockets.Shutdown_Socket (Sock, GNAT.Sockets.Shut_Write);
       end if;
       if Tail /= "" then
          delay Tail_Delay;
-         Send_Text (Tail);
+         Send_Text (Sock, Tail);
       end if;
-      loop
-         declare
-            Chunk : Ada.Streams.Stream_Element_Array (1 .. 1_024);
-            Last  : Ada.Streams.Stream_Element_Offset;
-         begin
-            Receive_Socket (Sock, Chunk, Last);
-            exit when Last < Chunk'First;
-            for K in 1 .. Last loop
-               Append (Reply, Character'Val (Chunk (K)));
-            end loop;
-         exception
-            when Socket_Error =>
-               exit;
-         end;
-      end loop;
-      Close_Socket (Sock);
-      return To_String (Reply);
+      return Read_To_Close (Sock);
    end Exchange;
 
-   --  A head, then Count single bytes Gap apart: every READ lands well
-   --  inside the per-read timeout, so only a whole-connection budget
-   --  can end it.  Answers whatever the server sent back.
+   --  Every READ the server makes lands well inside its per-read
+   --  timeout, so only a whole-connection budget can end this.  A send
+   --  that fails is the server closing on us: the budget ran out.
    function Dribble
      (Port : Natural; Head : String; Count : Positive; Gap : Duration)
       return String
    is
-      use GNAT.Sockets;
-      use type Ada.Streams.Stream_Element_Offset;
-
-      Sock  : Socket_Type;
-      Addr  : constant Sock_Addr_Type :=
-        (Family => Family_Inet,
-         Addr   => Inet_Addr ("127.0.0.1"),
-         Port   => Port_Type (Port));
-      Reply : Unbounded_String;
-      Last  : Ada.Streams.Stream_Element_Offset;
+      Sock : constant GNAT.Sockets.Socket_Type := Dial (Port, Timeout => 5.0);
    begin
-      Create_Socket (Sock);
-      Set_Socket_Option
-        (Sock, Socket_Level, (Name => Receive_Timeout, Timeout => 5.0));
-      Connect_Socket (Sock, Addr);
-      declare
-         Buf : Ada.Streams.Stream_Element_Array (1 .. Head'Length);
-      begin
-         for K in Head'Range loop
-            Buf (Ada.Streams.Stream_Element_Offset (K - Head'First + 1)) :=
-              Ada.Streams.Stream_Element (Character'Pos (Head (K)));
-         end loop;
-         Send_Socket (Sock, Buf, Last);
-      end;
+      Send_Text (Sock, Head);
       for K in 1 .. Count loop
          delay Gap;
          begin
-            Send_Socket (Sock, [1 => Ada.Streams.Stream_Element (65)], Last);
+            Send_Text (Sock, "A");
          exception
-            when Socket_Error =>
-               exit;   --  the server closed on us: the budget ran out
-         end;
-      end loop;
-      loop
-         declare
-            Chunk : Ada.Streams.Stream_Element_Array (1 .. 1_024);
-            Got   : Ada.Streams.Stream_Element_Offset;
-         begin
-            Receive_Socket (Sock, Chunk, Got);
-            exit when Got < Chunk'First;
-            for K in 1 .. Got loop
-               Append (Reply, Character'Val (Chunk (K)));
-            end loop;
-         exception
-            when Socket_Error =>
+            when GNAT.Sockets.Socket_Error =>
                exit;
          end;
       end loop;
-      Close_Socket (Sock);
-      return To_String (Reply);
+      return Read_To_Close (Sock);
    end Dribble;
 
    function Await_Port
@@ -439,56 +419,41 @@ package body Nuntius_World.Web is
    --  with the server, which adopted it.
    function Upgrade_Reply (Port : Natural; Extensions : String) return String
    is
-      use GNAT.Sockets;
       use type Ada.Streams.Stream_Element_Offset;
 
-      Sock  : Socket_Type;
+      Sock  : constant GNAT.Sockets.Socket_Type := Dial (Port, Timeout => 2.0);
       Reply : Unbounded_String;
-      Text  : constant String :=
-        "GET /api/stream HTTP/1.1"
-        & CRLF
-        & "Connection: Upgrade"
-        & CRLF
-        & "Upgrade: websocket"
-        & CRLF
-        & "Sec-WebSocket-Version: 13"
-        & CRLF
-        & "Sec-WebSocket-Key: "
-        & Key_24
-        & CRLF
-        & (if Extensions = ""
-           then ""
-           else "Sec-WebSocket-Extensions: " & Extensions & CRLF)
-        & CRLF;
-      Buf   : Ada.Streams.Stream_Element_Array (1 .. Text'Length);
+      One   : Ada.Streams.Stream_Element_Array (1 .. 1);
       Last  : Ada.Streams.Stream_Element_Offset;
    begin
-      Create_Socket (Sock);
-      Set_Socket_Option
-        (Sock, Socket_Level, (Name => Receive_Timeout, Timeout => 2.0));
-      Connect_Socket
+      Send_Text
         (Sock,
-         (Family => Family_Inet,
-          Addr   => Inet_Addr ("127.0.0.1"),
-          Port   => Port_Type (Port)));
-      for K in Text'Range loop
-         Buf (Ada.Streams.Stream_Element_Offset (K)) :=
-           Ada.Streams.Stream_Element (Character'Pos (Text (K)));
-      end loop;
-      Send_Socket (Sock, Buf, Last);
+         "GET /api/stream HTTP/1.1"
+         & CRLF
+         & "Connection: Upgrade"
+         & CRLF
+         & "Upgrade: websocket"
+         & CRLF
+         & "Sec-WebSocket-Version: 13"
+         & CRLF
+         & "Sec-WebSocket-Key: "
+         & Key_24
+         & CRLF
+         & (if Extensions = ""
+            then ""
+            else "Sec-WebSocket-Extensions: " & Extensions & CRLF)
+         & CRLF);
       while not Has (To_String (Reply), CRLF & CRLF) loop
-         declare
-            One : Ada.Streams.Stream_Element_Array (1 .. 1);
          begin
-            Receive_Socket (Sock, One, Last);
-            exit when Last < One'First;
-            Append (Reply, Character'Val (One (1)));
+            GNAT.Sockets.Receive_Socket (Sock, One, Last);
          exception
-            when Socket_Error =>
+            when GNAT.Sockets.Socket_Error =>
                exit;
          end;
+         exit when Last < One'First;
+         Append (Reply, Character'Val (One (1)));
       end loop;
-      Close_Socket (Sock);
+      GNAT.Sockets.Close_Socket (Sock);
       return To_String (Reply);
    end Upgrade_Reply;
 
