@@ -1,4 +1,5 @@
 with "aunit";
+with "fabula";
 with "../nuntius.gpr";
 
 --  The AUnit suite for nuntius.  Mirrors sml-ada's test crate: the MODE
@@ -13,7 +14,9 @@ project Test_Nuntius is
    for Object_Dir use "obj/" & Mode;
    for Exec_Dir use "bin/" & Mode;
    for Create_Missing_Dirs use "True";
-   for Main use ("test_runner.adb");
+   --  Two mains: the AUnit suite, and the Gherkin runner over
+   --  tests/features/ (a generic instantiation, so a spec).
+   for Main use ("test_runner.adb", "nuntius_features.ads");
 
    package Compiler is
       Common := ("-g", "-gnata", "-gnatwa", "-gnatwe", "-gnat2022");

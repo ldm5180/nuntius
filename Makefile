@@ -5,7 +5,7 @@
 
 EX := -P example/example.gpr
 
-.PHONY: all build test prove format example release debug run clean help
+.PHONY: all build test features prove format example release debug run clean help
 
 all: build
 
@@ -19,6 +19,19 @@ test:
 	alr exec -- tests/bin/debug/test_runner
 	alr exec -- gprbuild -p -j0 -XMODE=release -P tests/test_nuntius.gpr
 	alr exec -- tests/bin/release/test_runner
+
+## features    Build and run the Gherkin features in both modes.  fabula
+##             exits 0 for a missing path or an empty file, so the
+##             summary line is what says every scenario ran and passed
+features:
+	alr exec -- gprbuild -p -j0 -XMODE=debug -P tests/test_nuntius.gpr
+	alr exec -- gprbuild -p -j0 -XMODE=release -P tests/test_nuntius.gpr
+	@for mode in debug release; do \
+	  out=$$(alr exec -- tests/bin/$$mode/nuntius_features tests/features) || \
+	    { printf '%s\n' "$$out"; exit 1; }; \
+	  printf '%s\n' "$$out" | grep -qE '^[1-9][0-9]* Scenarios? \([0-9]+ passed\)$$' || \
+	    { printf '%s\n' "$$out"; echo "features: $$mode: a scenario did not pass"; exit 1; }; \
+	done; echo 'features: every scenario passed in both modes'
 
 ## prove       Run the SPARK proof (same flags as CI)
 prove:
