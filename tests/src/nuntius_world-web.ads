@@ -100,10 +100,20 @@ package Nuntius_World.Web is
    --  A GET of Target carrying Headers (each ending in CRLF).
    function Get_With (Target, Headers : String) return String;
 
-   --  An upgrade request to /api/stream, with Extensions as the offer
-   --  ("" for none); answers the head up to its blank line.  The socket
-   --  stays with the server, which adopted it.
-   function Upgrade_Reply (Port : Natural; Extensions : String) return String;
+   --  An upgrade request to Target, with Extensions as the offer ("" for
+   --  none); answers the head up to its blank line.  The socket stays
+   --  with the server, which adopted it.
+   function Upgrade_Reply
+     (Port : Natural; Extensions : String; Target : String := "/api/stream")
+      return String;
+
+   --  Whether the loop has handed a socket to Adopt, waiting up to two
+   --  seconds: the 101 can reach the client before Adopt runs.
+   function Await_Adoption return Boolean;
+
+   --  Close the socket the server handed over, if it handed one; never
+   --  waits, so an After hook can call it for every scenario.
+   procedure Drop_Held;
 
    --  Drop the socket the server handed over, so the next upgrade's
    --  adoption is its own.

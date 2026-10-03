@@ -418,7 +418,9 @@ package body Nuntius_World.Web is
    --  An upgrade request sent raw, with Extensions as the offer ("" for
    --  none); answers the head up to its blank line.  The socket stays
    --  with the server, which adopted it.
-   function Upgrade_Reply (Port : Natural; Extensions : String) return String
+   function Upgrade_Reply
+     (Port : Natural; Extensions : String; Target : String := "/api/stream")
+      return String
    is
       use type Ada.Streams.Stream_Element_Offset;
 
@@ -429,7 +431,9 @@ package body Nuntius_World.Web is
    begin
       Send_Text
         (Sock,
-         "GET /api/stream HTTP/1.1"
+         "GET "
+         & Target
+         & " HTTP/1.1"
          & CRLF
          & "Connection: Upgrade"
          & CRLF
@@ -473,6 +477,29 @@ package body Nuntius_World.Web is
          GNAT.Sockets.Close_Socket (Sock);
       end if;
    end Release_Held;
+
+   --  How long Await_Adoption waits, in slices.
+   Adoption_Polls : constant := 200;
+   Adoption_Slice : constant Duration := 0.01;
+
+   function Await_Adoption return Boolean is
+   begin
+      for K in 1 .. Adoption_Polls loop
+         exit when Cells.Adopted > 0;
+         delay Adoption_Slice;
+      end loop;
+      return Cells.Adopted > 0;
+   end Await_Adoption;
+
+   procedure Drop_Held is
+      Sock : GNAT.Sockets.Socket_Type;
+      Got  : Boolean;
+   begin
+      Cells.Take (Sock, Got);
+      if Got then
+         GNAT.Sockets.Close_Socket (Sock);
+      end if;
+   end Drop_Held;
 
    task type Loop_Task is
       entry Run (Kind : Loop_Kind);
