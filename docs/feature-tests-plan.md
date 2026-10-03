@@ -198,25 +198,36 @@ them.  A reply is kept whole in the context (`Last_Reply`), and every
 
 ### 3.1 The frame table
 
-A scripted peer's script is a table, one frame per row, in the order
-it sends them after the 101:
+A scripted peer's script is a table of `kind | text` rows, played in
+order after the 101:
 
 ```gherkin
 Given a scripted websocket peer that sends:
-  | kind         | text   |
-  | text         | hello  |
-  | text-start   | foo    |
-  | continuation | bar    |
-  | ping         |        |
-  | close        |        |
+  | kind         | text  |
+  | text         | hello |
+  | text-start   | foo   |
+  | continuation | bar   |
+  | ping         |       |
+  | close        |       |
 ```
 
-`kind` is one of `text`, `text-start`, `continuation`, `ping`,
-`close`, `oversize` (a text frame past the client's bound), `rsv1`,
-`burst N` (N tiny text frames in one write, the desync case) and
-`bytes <name>` (a named sequence, section 3.2, for a frame no kind
-spells).  An unknown kind fails the step with its name.  The peer
-hangs up after its last row, as the suite's `Server` does.
+`kind` is one of `text`, `text-start`, `continuation`, `ping` (which
+then waits for the client's pong), `close`, `burst` (text = N tiny
+text frames, payload 0, 1, ..), `oversize` (text = N, one text frame
+of N bytes), `rsv1` (a short frame with RSV1 set) and `hold` (text =
+ms of silence).  Everything up to a `hold` or a `ping` goes out as ONE
+write, the 101 included -- so a burst lands glued to the handshake,
+which is the hostile case the burst scenario is for.  An unknown row
+fails the step and names it.  The peer hangs up after its last row;
+the After hook aborts one still blocked three seconds later.
+
+The client a scenario dials with has a shape -- ring depth, frame
+bound, idle limit -- and each shape is a generic instance in
+`Nuntius_World.Ws_Client`, held through `Nuntius.Ws.Transport'Class`:
+`a websocket client` (8 x 256, 2 s), `a websocket client whose ring
+holds {int} frames of up to {int} bytes` (128 x 16, 4 x 256, 4 x 32),
+`a websocket client that gives up after 1 second of silence`.  A shape
+the world lacks fails the step rather than being faked.
 
 ### 3.2 Bytes that do not fit a line
 
@@ -657,3 +668,8 @@ session scratchpad, GNAT 15.2.0, gprbuild 26.0.1, 2026-10-03:
   for any target but the one the world takes.  The status check
   matches `HTTP/1.1 <code> ` directly, since 101 is not a status of
   `Nuntius.Web`.
+- **During F6 (2026-10-03):** the frame table's rows go out as one
+  write up to each `hold` or `ping` rather than one write per row --
+  simpler, and it keeps the glued-burst case; `bytes <name>` is not
+  needed by any client scenario and waits for F7.  The client's shape
+  is chosen by sentence from the instances the world has.
