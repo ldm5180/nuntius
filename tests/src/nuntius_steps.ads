@@ -12,14 +12,15 @@ with Fabula.Frames;
 with Fabula.Registry;
 
 --  The step registry the feature runner dispatches on: one Step_Kind
---  per pattern, one table that reads like the features, one Execute.
+--  per pattern, one table that reads like the features, and one Execute
+--  that offers each step to every feature's state machine.
 
 package Nuntius_Steps is
 
    use Ada.Strings.Unbounded;
 
-   --  The steps, grouped by the feature that reads them; each group is
-   --  a subtype, dispatched to its own child package.
+   --  The steps, grouped by the feature that reads them.  Each is an
+   --  event of that feature's state machine, in its own child package.
    type Step_Kind is
      (E_Start_Server,
       E_Start_Short_Server,
@@ -118,15 +119,10 @@ package Nuntius_Steps is
       E_Check_Gunzip_Back,
       E_Check_Unpack_Back,
       E_Check_Packed_Word,
+      --  Events no pattern names: a machine posts them to itself after
+      --  an action whose result the next row's guard reads.
       E_Listened,
       E_Adoption_Settled);
-
-   subtype Web_Step is
-     Step_Kind range E_Start_Server .. E_Check_Length_Matches;
-   subtype Http_Step is Step_Kind range E_Set_Agent .. E_Check_All_Complete;
-   subtype Ws_Step is Step_Kind range E_Ws_Default .. E_Check_Lost_Within;
-   subtype Peer_Step is Step_Kind range E_Pair_Plain .. E_Check_Send_Fails;
-   subtype Coding_Step is Step_Kind range E_Gzip_Json .. E_Check_Packed_Word;
 
    type Hook_Kind is (Fresh_World, Stop_World);
 
