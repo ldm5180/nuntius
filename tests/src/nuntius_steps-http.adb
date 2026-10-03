@@ -193,4 +193,18 @@ package body Nuntius_Steps.Http is
       end case;
    end Execute;
 
+   procedure Offer
+     (Ctx : in out Step_Context; Evt : Step_Kind; Handled : out Boolean) is
+   begin
+      Handled := Evt in Http_Step;
+      if Handled then
+         Execute (Evt, Ctx.W, Ctx.A, Ctx.R);
+      end if;
+   end Offer;
+
+   procedure Reset is null;
+
+   function Phase return String
+   is ("-");
+
 end Nuntius_Steps.Http;
