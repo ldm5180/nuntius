@@ -1,19 +1,16 @@
---  The serving loop's steps (web-server.feature): stand a loop up,
---  compose or send a request, read back what it answered.
+--  The serving loop's steps (web-server.feature, upgrade.feature, the
+--  loop half of codings.feature): stand a loop up, compose or send a
+--  request, read back what it answered.  A region of the registry: Offer
+--  takes this feature's steps, Reset starts a scenario, Phase names its
+--  state.
 
 package Nuntius_Steps.Web is
 
-   procedure Execute
-     (S   : Web_Step;
-      Ctx : in out World;
-      A   : Fabula.Args.List;
-      R   : in out Fabula.Check.Outcome);
-
-   --  This feature as a region of the registry: Offer takes the step if it
-   --  is this feature's, Reset starts a scenario, Phase names its state.
    procedure Offer
      (Ctx : in out Step_Context; Evt : Step_Kind; Handled : out Boolean);
+
    procedure Reset;
+
    function Phase return String;
 
 end Nuntius_Steps.Web;
