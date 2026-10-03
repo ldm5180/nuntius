@@ -11,8 +11,11 @@ package Nuntius_World.Ws_Client is
    --  The default shape: 8 frames of up to 256 bytes, 2 s idle limit.
    procedure Choose_Default;
 
-   --  The shape with this ring depth and frame bound and the default
-   --  idle limit; Found False when the world has no such instance.
+   --  Whether the world has a client of this ring depth and frame bound
+   --  at the default idle limit.
+   function Has_Shape (Depth, Bytes : Natural) return Boolean;
+
+   --  That client; Found False when the world has no such instance.
    procedure Choose (Depth, Bytes : Natural; Found : out Boolean);
 
    --  The default shape with a 1 s idle limit instead.

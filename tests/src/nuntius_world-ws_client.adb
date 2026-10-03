@@ -71,6 +71,12 @@ package body Nuntius_World.Ws_Client is
       Replace (new Default_Ws.Client);
    end Choose_Default;
 
+   function Has_Shape (Depth, Bytes : Natural) return Boolean
+   is ((Depth = Burst_Depth and then Bytes = Burst_Bytes)
+       or else (Depth = Flood_Depth and then Bytes = Flood_Bytes)
+       or else (Depth = Over_Depth and then Bytes = Over_Bytes)
+       or else (Depth = Default_Depth and then Bytes = Default_Bytes));
+
    procedure Choose (Depth, Bytes : Natural; Found : out Boolean) is
    begin
       Found := True;
