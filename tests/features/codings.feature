@@ -27,6 +27,7 @@ Feature: A body is compressed when the client takes it, and never otherwise
     When the client sends a GET to /small
     And with header "Accept-Encoding: gzip, deflate, br"
     Then the reply carries no "Content-Encoding"
+    And the reply body is 100 bytes of the big JSON
 
   Scenario: An image goes plain
     Given a serving loop that compresses when offered

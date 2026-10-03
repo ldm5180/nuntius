@@ -45,12 +45,14 @@ Feature: The serving loop answers every request it is sent
     And with the body {"scope":"all"}
     Then the reply status is 200
     And the handler received "hi:POST:/api/close:{"
+    And the handler echoed the request
 
   Scenario: A body that arrives in a second write still reaches the handler
     When the client sends a POST to /api/close
     And with the body {"scope":"all"}
     And with the body arriving 200 ms later
     Then the reply status is 200
+    And the handler echoed the request
     And the handler saw 1 request
 
   Scenario: Half a head, then a hangup, is dropped quietly

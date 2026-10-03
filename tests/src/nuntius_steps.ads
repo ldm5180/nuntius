@@ -122,13 +122,21 @@ package Nuntius_Steps is
       --  Events no pattern names: a machine posts them to itself after
       --  an action whose result the next row's guard reads.
       E_Listened,
-      E_Adoption_Settled);
+      E_Adoption_Settled,
+      --  Added when the features took over the integration tests: the
+      --  exact facts those tests asserted.
+      E_Check_Echoed,
+      E_Check_Big_Prefix,
+      E_Check_Response_Empty,
+      E_Check_Slots_Taken);
 
    type Hook_Kind is (Fresh_World, Stop_World);
 
    --  A request being composed: its head so far, its body, and how long
    --  after the head the body follows.  It goes out at the first check.
    type Pending_Request is record
+      Method  : Unbounded_String;
+      Target  : Unbounded_String;
       Head    : Unbounded_String;
       Content : Unbounded_String;
       Tail_Ms : Natural := 0;
@@ -245,6 +253,8 @@ package Nuntius_Steps is
       Step ("the reply carries no {string}")                  >= E_Check_Lacks,
       Step ("the reply carries {string}")                     >= E_Check_Carries,
       Step ("the handler received {string}")                  >= E_Check_Carries,
+      Step ("the handler echoed the request")                 >= E_Check_Echoed,
+      Step ("the reply body is {int} bytes of the big JSON")  >= E_Check_Big_Prefix,
       Step ("no reply arrives")                               >= E_Check_Silent,
       Step ("the handler saw {int} request(s)")               >= E_Check_Handled,
       Step ("the handler saw it as an upgrade")               >= E_Check_Saw_Upgrade,
@@ -272,6 +282,8 @@ package Nuntius_Steps is
       Step ("the response is a transport failure")            >= E_Check_Response_Failure,
       Step ("the response status is {int}")                   >= E_Check_Response_Status,
       Step ("the request on the wire carried {string}")       >= E_Check_Wire,
+      Step ("the response carries no reply and no location")  >= E_Check_Response_Empty,
+      Step ("every slot of the table was taken")              >= E_Check_Slots_Taken,
       Step ("the completion status is {int}")                 >= E_Check_Completion_Status,
       Step ("no completion surfaced")                         >= E_Check_No_Completion,
       Step ("the async client has {int} transfer(s) in flight")

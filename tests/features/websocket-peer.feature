@@ -43,6 +43,7 @@ Feature: A served websocket answers its browser as RFC 6455 says
     When the browser hangs up
     And the peer pumps
     Then the pump outcome is closed
+    And the peer is shut
     And a send from the peer fails
 
   Scenario Outline: A frame the peer will not read closes it, saying why

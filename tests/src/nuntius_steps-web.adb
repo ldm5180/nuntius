@@ -60,11 +60,14 @@ package body Nuntius_Steps.Web is
       A_Check_No_Upgrade,
       A_Check_Gunzips,
       A_Check_Big_Body,
-      A_Check_Length);
+      A_Check_Length,
+      A_Check_Echoed,
+      A_Check_Big_Prefix);
 
    subtype Start_Action is Action_Kind range A_Start_Plain .. A_No_Loop;
    subtype Send_Action is Action_Kind range A_Compose .. A_Refuse_Count;
-   subtype Check_Action is Action_Kind range A_Check_Status .. A_Check_Length;
+   subtype Check_Action is
+     Action_Kind range A_Check_Status .. A_Check_Big_Prefix;
 
    --  Where each value sits among a step's captures.
    First_Capture  : constant := 1;
@@ -202,7 +205,11 @@ package body Nuntius_Steps.Web is
       case A is
          when A_Compose      =>
             Ctx.W.Request :=
-              (Head   =>
+              (Method => To_Unbounded_String (First (Ctx)),
+               Target =>
+                 To_Unbounded_String
+                   (Fabula.Args.Word (Ctx.A, Second_Capture)),
+               Head   =>
                  To_Unbounded_String
                    (First (Ctx)
                     & " "
@@ -366,6 +373,31 @@ package body Nuntius_Steps.Web is
 
          when A_Check_Length      =>
             Check_Length (Ctx);
+
+         when A_Check_Echoed      =>
+            Fabula.Check.Is_True
+              (Ctx.R,
+               Has
+                 (Reply_Text (Ctx),
+                  "hi:"
+                  & To_String (Ctx.W.Request.Method)
+                  & ":"
+                  & To_String (Ctx.W.Request.Target)
+                  & ":"
+                  & To_String (Ctx.W.Request.Content)),
+               "the handler did not echo the request");
+
+         when A_Check_Big_Prefix  =>
+            Fabula.Check.Is_True
+              (Ctx.R,
+               Count (Ctx) <= Big_Json'Length
+               and then Body_Of (Reply_Text (Ctx))
+                        = Big_Json
+                            (Big_Json'First
+                             .. Big_Json'First + Count (Ctx) - 1),
+               "the body is not the first"
+               & Natural'Image (Count (Ctx))
+               & " bytes of the big JSON");
       end case;
    end Check_Act;
 
@@ -432,6 +464,8 @@ package body Nuntius_Steps.Web is
    Check_Gunzips        : constant Ev := (Kind => E_Check_Gunzips);
    Check_Big_Body       : constant Ev := (Kind => E_Check_Big_Body);
    Check_Length_Matches : constant Ev := (Kind => E_Check_Length_Matches);
+   Check_Echoed         : constant Ev := (Kind => E_Check_Echoed);
+   Check_Big_Prefix     : constant Ev := (Kind => E_Check_Big_Prefix);
 
    --!format off
    Table : constant Transition_Table :=
@@ -472,6 +506,8 @@ package body Nuntius_Steps.Web is
       Composing + Check_Gunzips                         / A_Send            >= Answered,
       Composing + Check_Big_Body                        / A_Send            >= Answered,
       Composing + Check_Length_Matches                  / A_Send            >= Answered,
+      Composing + Check_Echoed                          / A_Send            >= Answered,
+      Composing + Check_Big_Prefix                      / A_Send            >= Answered,
 
       --  Every check reads the reply in hand.
       Answered  + Check_Status (Count_Given)            / A_Check_Status    >= Answered,
@@ -489,7 +525,10 @@ package body Nuntius_Steps.Web is
       Answered  + Check_No_Upgrade                      / A_Check_No_Upgrade  >= Answered,
       Answered  + Check_Gunzips                         / A_Check_Gunzips   >= Answered,
       Answered  + Check_Big_Body                        / A_Check_Big_Body  >= Answered,
-      Answered  + Check_Length_Matches                  / A_Check_Length    >= Answered];
+      Answered  + Check_Length_Matches                  / A_Check_Length    >= Answered,
+      Answered  + Check_Echoed                          / A_Check_Echoed    >= Answered,
+      Answered  + Check_Big_Prefix (Count_Given)        / A_Check_Big_Prefix >= Answered,
+      Answered  + Check_Big_Prefix                      / A_Refuse_Count    >= Answered];
    --!format on
 
    Current : State := Idle;
