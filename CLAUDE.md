@@ -22,6 +22,11 @@ reception always mean "reconnect-worthy".
 - `make features` — the Gherkin features under `tests/features/` in both
   modes, on fabula; checks the summary line, since fabula exits 0 for
   a missing path.  `alr test` runs them too
+- `make features-report` — the living documentation: the features with
+  `--report-json`, rendered by multiple-cucumber-html-reporter
+  (`tools/features-report`, node) into `obj/features-report/html`.  CI
+  keeps it with every run and publishes it from main to
+  https://ldm5180.github.io/nuntius/
 - `make prove`   — SPARK proof, `--checks-as-errors=on`; must exit 0
 - `make format`  — `gnatformat --check` over all committed Ada sources
 - `make example` — build the demo mains both ways (CI builds, never runs them:
@@ -102,10 +107,18 @@ reception always mean "reconnect-worthy".
   `AUnit.Assertions.Assert` and are wired via `Register_Routine`.
 - Tests stay off the network: loopback only, port 0, never a fixed
   port and never a real endpoint -- adapter tests and features alike.
-- A feature says a behavior in the operator's words and checks one
-  fact per step; the unit test keeps the mechanism.  A step a world
-  cannot honor (a client shape it has no instance of, an upgrade
-  target it does not take) fails, rather than pretending.
+- Tests are layers -- guidance for judgement, not a mechanical rule.
+  A unit test typically tests a single function, or at most a simple
+  interaction between two (an adapter against a test double counts),
+  and the unit tests always cover the function they test completely.
+  A feature (BDD) tests the larger interactions that form a
+  higher-level, conceptual feature, in the operator's words, one fact
+  per step.  Coverage is wanted and duplication across the layers is
+  fine: a test is removed only when it is purely redundant -- an
+  integration test a BDD scenario fully supplants.  Byte-level detail
+  stays in unit tests.
+- A step a world cannot honor (a client shape it has no instance of, an
+  upgrade target it does not take) fails, rather than pretending.
 
 ## Programming best practices
 

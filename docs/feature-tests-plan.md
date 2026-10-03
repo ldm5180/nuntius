@@ -699,3 +699,11 @@ session scratchpad, GNAT 15.2.0, gprbuild 26.0.1, 2026-10-03:
   a step taken out of order now fails naming every feature's state.
   `make features` prints the runner's report as it goes.  Both are the
   shape every later feature-tests plan starts from.
+- **Living docs and duplication (2026-10-03):** the features are
+  published -- `--report-json`, multiple-cucumber-html-reporter, GitHub
+  Pages from main.  The AUnit tests the features were lifted from all
+  stay: each exercises one adapter against a double, so each is a unit
+  test, and the unit tests always cover the function they test
+  completely.  A test is removed only when it is an integration test a
+  BDD scenario fully supplants; none here is.  Guidance for judgement,
+  not a rule.
