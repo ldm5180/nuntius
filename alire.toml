@@ -16,6 +16,7 @@ utilada_curl = "^2.9.0"
 aws = "^25.2.0"
 sml = "*"
 aunit = "^26.0.0"
+fabula = "*"
 
 #  sml-ada is not in the community index; pin it to an exact commit so a
 #  build is reproducible from this file alone.  A consumer workspace must
@@ -23,6 +24,11 @@ aunit = "^26.0.0"
 #  bumping this is coordinated with the application repos (arb-ada).
 [[pins]]
 sml = { url = "https://github.com/ldm5180/sml-ada.git", commit = "3ccd0e4bf51685ebd832383c12166e795473a037" }
+#  fabula, the Gherkin runner the features under tests/features/ run on,
+#  is a TEST dependency and not in the community index either.  Pinned by
+#  commit like sml, and its own sml pin must equal the one above: alr
+#  refuses two links to one crate at different commits.
+fabula = { url = "https://github.com/ldm5180/fabula.git", commit = "746a234df5581c2e38c4202aeee8b07473fb6a51" }
 
 [build-switches]
 "*".ada_version = "Ada2022"
