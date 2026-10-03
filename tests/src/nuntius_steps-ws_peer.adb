@@ -259,28 +259,28 @@ package body Nuntius_Steps.Ws_Peer is
          else Fabula.Numbers.Integer_Reads.Success (0));
    begin
       case S is
-         when Pair_Plain           =>
+         when E_Pair_Plain           =>
             Open_Pair (Nuntius.Codings.Plain);
 
-         when Pair_Deflated        =>
+         when E_Pair_Deflated        =>
             Open_Pair (Nuntius.Codings.Deflated);
 
-         when Peer_Send_Big        =>
+         when E_Peer_Send_Big        =>
             Send_Big (Ctx, N, R);
 
-         when Peer_Send_Packed     =>
+         when E_Peer_Send_Packed     =>
             Send_Peer_Json (Ctx, N, R);
 
-         when Peer_Send_Text       =>
+         when E_Peer_Send_Text       =>
             Peer_Text (Fabula.Args.Text (A, First_Capture), R);
 
-         when Browser_Ping         =>
+         when E_Browser_Ping         =>
             Browser_Control
               (Browser_Sock,
                Op_Ping,
                Bytes_Of (Fabula.Args.Text (A, First_Capture)));
 
-         when Browser_Close        =>
+         when E_Browser_Close        =>
             if N.Ok and then N.Value in Close_Code then
                Browser_Control
                  (Browser_Sock, Op_Close, Close_Payload (N.Value));
@@ -288,65 +288,65 @@ package body Nuntius_Steps.Ws_Peer is
                Fabula.Check.Fail_Step (R, "not a close code");
             end if;
 
-         when Browser_Long         =>
+         when E_Browser_Long         =>
             Send_Long (Ctx, N, R);
 
-         when Browser_Binary       =>
+         when E_Browser_Binary       =>
             Browser_Frame (Browser_Sock, Binary_Lead, Bytes_Of ("a"));
 
-         when Browser_Rsv1         =>
+         when E_Browser_Rsv1         =>
             Browser_Frame (Browser_Sock, Packed_Lead, Bytes_Of ("a"));
 
-         when Browser_Ping_Rsv1    =>
+         when E_Browser_Ping_Rsv1    =>
             Browser_Frame (Browser_Sock, Ping_Rsv1_Lead, []);
 
-         when Browser_Packed_Json  =>
+         when E_Browser_Packed_Json  =>
             Send_Packed_Json (Ctx, N, R);
 
-         when Browser_Packed_Zeros =>
+         when E_Browser_Packed_Zeros =>
             Send_Zeros (Ctx, N, R);
 
-         when Browser_Named        =>
+         when E_Browser_Named        =>
             Send_Named (Fabula.Args.Word (A, First_Capture), Info, R);
 
-         when Browser_Json         =>
+         when E_Browser_Json         =>
             Browser_Says (Ctx, Fabula.Args.Text (A, First_Capture));
 
-         when Browser_Hangs_Up     =>
+         when E_Browser_Hangs_Up     =>
             Hang_Up;
 
-         when Peer_Pump            =>
+         when E_Peer_Pump            =>
             Pump (Ctx);
 
-         when Check_Pump           =>
+         when E_Check_Pump           =>
             Check_Outcome_Named (Ctx, Fabula.Args.Word (A, First_Capture), R);
 
-         when Check_Read_Sent      =>
+         when E_Check_Read_Sent      =>
             Fabula.Check.Is_True
               (R,
                Ctx.Peer.Read = Ctx.Peer.Sent,
                "the peer read what was sent");
 
-         when Check_Text_Frame     =>
+         when E_Check_Text_Frame     =>
             Expect_Frame (Text_Lead, Fabula.Args.Text (A, First_Capture), R);
 
-         when Check_Text_Length    =>
+         when E_Check_Text_Length    =>
             Expect_Length (Ctx, N, R);
 
-         when Check_Packed_Frame   =>
+         when E_Check_Packed_Frame   =>
             Expect_Frame (Packed_Lead, To_String (Ctx.Peer.Packed), R);
 
-         when Check_Pong_Frame     =>
+         when E_Check_Pong_Frame     =>
             Expect_Frame (Pong_Lead, Fabula.Args.Text (A, First_Capture), R);
 
-         when Check_Close_Frame    =>
+         when E_Check_Close_Frame    =>
             Expect_Close (N, R);
 
-         when Check_Shut           =>
+         when E_Check_Shut           =>
             Fabula.Check.Is_False
               (R, Peers.Is_Open (The_Peer), "the peer is open");
 
-         when Check_Send_Fails     =>
+         when E_Check_Send_Fails     =>
             Send_Fails (R);
       end case;
    end Execute;
