@@ -109,4 +109,16 @@ package Nuntius_World.Web is
    --  adoption is its own.
    procedure Release_Held;
 
+   --  Which serving loop a feature stands up.
+   type Loop_Kind is
+     (Plain_Loop, Short_Loop, Stream_Loop, Gzip_Loop, Deflate_Loop);
+
+   --  Kind's loop on a task of its own, and the port it bound; 0 when it
+   --  never listened.  Stop_Loops is what ends it.
+   procedure Start_Loop (Kind : Loop_Kind; Port : out Natural);
+
+   --  Stop every loop Start_Loop started and wait for each to end, so
+   --  the next scenario's Cells.Reset finds no task still serving.
+   procedure Stop_Loops;
+
 end Nuntius_World.Web;

@@ -1,3 +1,5 @@
+with Ada.Strings.Unbounded;
+
 with Fabula.Args;
 with Fabula.Check;
 with Fabula.Frames;
@@ -8,13 +10,44 @@ with Fabula.Registry;
 
 package Nuntius_Steps is
 
-   type Step_Kind is (Nothing_Sent, Send_Bytes, Check_Sent);
-   type Hook_Kind is (Fresh_World);
+   use Ada.Strings.Unbounded;
+
+   --  The steps, grouped by the feature that reads them; each group is
+   --  a subtype, dispatched to its own child package.
+   type Step_Kind is
+     (Start_Server,
+      Start_Short_Server,
+      Send_Request,
+      Add_Header,
+      Add_Body,
+      Split_Body,
+      Send_Raw,
+      Send_Half,
+      Send_Dribble,
+      Check_Status,
+      Check_Carries,
+      Check_Silent,
+      Check_Handled);
+
+   subtype Web_Step is Step_Kind range Start_Server .. Check_Handled;
+
+   type Hook_Kind is (Fresh_World, Stop_World);
+
+   --  A request being composed: its head so far, its body, and how long
+   --  after the head the body follows.  It goes out at the first check.
+   type Pending_Request is record
+      Waiting : Boolean := False;
+      Head    : Unbounded_String;
+      Content : Unbounded_String;
+      Tail_Ms : Natural := 0;
+   end record;
 
    --  What one scenario reads back.  fabula copies it per step, so it
-   --  holds values only; the sockets and tasks live in the world.
+   --  holds values only; the sockets and tasks live in Nuntius_World.
    type World is record
-      Sent : Natural := 0;
+      Port    : Natural := 0;
+      Request : Pending_Request;
+      Reply   : Unbounded_String;
    end record;
 
    package Steps is new
@@ -24,12 +57,27 @@ package Nuntius_Steps is
         Context   => World);
    use Steps;
 
+   --!format off
    Step_Defs : constant Steps.Step_Table :=
-     [Step ("nothing has been sent") >= Nothing_Sent,
-      Step ("{int} bytes are sent") >= Send_Bytes,
-      Step ("{int} bytes have been sent") >= Check_Sent];
+     [Step ("a serving loop on loopback")                     >= Start_Server,
+      Step ("a serving loop with a 1-second connection budget")
+                                                              >= Start_Short_Server,
+      Step ("the client sends a {word} to {word}")            >= Send_Request,
+      Step ("with header {string}")                           >= Add_Header,
+      Step ("with the body arriving {int} ms later")          >= Split_Body,
+      Step ("with the body {}")                               >= Add_Body,
+      Step ("the client sends half a head and hangs up")      >= Send_Half,
+      Step ("the client dribbles one byte every {int} ms")    >= Send_Dribble,
+      Step ("the client sends {string}")                      >= Send_Raw,
+      Step ("the reply status is {int}")                      >= Check_Status,
+      Step ("the reply carries {string}")                     >= Check_Carries,
+      Step ("the handler received {string}")                  >= Check_Carries,
+      Step ("no reply arrives")                               >= Check_Silent,
+      Step ("the handler saw {int} request(s)")               >= Check_Handled];
+   --!format on
 
-   Hook_Defs : constant Steps.Hook_Table := [Before >= Fresh_World];
+   Hook_Defs : constant Steps.Hook_Table :=
+     [Before >= Fresh_World, After >= Stop_World];
 
    procedure Execute
      (S    : Step_Kind;
