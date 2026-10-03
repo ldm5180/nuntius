@@ -1,22 +1,7 @@
-with Fabula.Check.Ints;
-with Fabula.Numbers;
+with Nuntius_Steps.Web;
+with Nuntius_World.Web;
 
 package body Nuntius_Steps is
-
-   --  Where the byte count sits among a step's captures.
-   Count_Capture : constant := 1;
-
-   procedure Add_Sent
-     (Ctx : in out World;
-      N   : Fabula.Numbers.Integer_Reads.Read;
-      R   : in out Fabula.Check.Outcome) is
-   begin
-      if N.Ok then
-         Ctx.Sent := Ctx.Sent + N.Value;
-      else
-         Fabula.Check.Ints.Fail_Read (R, N.Error);
-      end if;
-   end Add_Sent;
 
    procedure Execute
      (S    : Step_Kind;
@@ -28,15 +13,8 @@ package body Nuntius_Steps is
       pragma Unreferenced (Info);
    begin
       case S is
-         when Nothing_Sent =>
-            Fabula.Check.Ints.Equal (R, Ctx.Sent, 0);
-
-         when Send_Bytes   =>
-            Add_Sent (Ctx, Fabula.Args.Int (A, Count_Capture), R);
-
-         when Check_Sent   =>
-            Fabula.Check.Ints.Equal
-              (R, Ctx.Sent, Fabula.Args.Int (A, Count_Capture));
+         when Web_Step =>
+            Nuntius_Steps.Web.Execute (S, Ctx, A, R);
       end case;
    end Execute;
 
@@ -51,6 +29,10 @@ package body Nuntius_Steps is
       case H is
          when Fresh_World =>
             Ctx := (others => <>);
+            Nuntius_World.Web.Cells.Reset;
+
+         when Stop_World  =>
+            Nuntius_World.Web.Stop_Loops;
       end case;
    end Run_Hook;
 

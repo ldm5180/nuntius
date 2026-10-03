@@ -1,4 +1,5 @@
 with Ada.Streams;
+with Ada.Unchecked_Deallocation;
 with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
 
@@ -472,5 +473,84 @@ package body Nuntius_World.Web is
          GNAT.Sockets.Close_Socket (Sock);
       end if;
    end Release_Held;
+
+   task type Loop_Task is
+      entry Run (Kind : Loop_Kind);
+   end Loop_Task;
+
+   task body Loop_Task is
+      K : Loop_Kind;
+   begin
+      accept Run (Kind : Loop_Kind) do
+         K := Kind;
+      end Run;
+      case K is
+         when Plain_Loop   =>
+            Serve ("127.0.0.1", 0);
+
+         when Short_Loop   =>
+            Serve_Short ("127.0.0.1", 0);
+
+         when Stream_Loop  =>
+            Serve_Stream ("127.0.0.1", 0);
+
+         when Gzip_Loop    =>
+            Serve_Gzip ("127.0.0.1", 0);
+
+         when Deflate_Loop =>
+            Serve_Deflate ("127.0.0.1", 0);
+      end case;
+   end Loop_Task;
+
+   type Loop_Access is access Loop_Task;
+
+   procedure Free is new Ada.Unchecked_Deallocation (Loop_Task, Loop_Access);
+
+   --  The loops a scenario started, until Stop_Loops ends them.
+   Max_Loops  : constant := 8;
+   Loops      : array (1 .. Max_Loops) of Loop_Access;
+   Loop_Count : Natural range 0 .. Max_Loops := 0;
+
+   --  How long Stop_Loops waits for one loop to notice the stop: well
+   --  past the loop's poll slice.
+   Join_Polls : constant := 500;
+   Join_Slice : constant Duration := 0.01;
+
+   function Port_Getter
+     (Kind : Loop_Kind) return not null access function return Natural
+   is (case Kind is
+         when Plain_Loop   => Test_Port'Access,
+         when Short_Loop   => Test_Short_Port'Access,
+         when Stream_Loop  => Test_Stream_Port'Access,
+         when Gzip_Loop    => Test_Gzip_Port'Access,
+         when Deflate_Loop => Test_Deflate_Port'Access);
+
+   procedure Start_Loop (Kind : Loop_Kind; Port : out Natural) is
+   begin
+      Loop_Count := Loop_Count + 1;
+      Loops (Loop_Count) := new Loop_Task;
+      Loops (Loop_Count).Run (Kind);
+      Port := Await_Port (Port_Getter (Kind));
+   end Start_Loop;
+
+   procedure Join (L : in out Loop_Access) is
+   begin
+      for K in 1 .. Join_Polls loop
+         exit when L'Terminated;
+         delay Join_Slice;
+      end loop;
+      if L'Terminated then
+         Free (L);
+      end if;
+   end Join;
+
+   procedure Stop_Loops is
+   begin
+      Cells.Request_Stop;
+      for K in 1 .. Loop_Count loop
+         Join (Loops (K));
+      end loop;
+      Loop_Count := 0;
+   end Stop_Loops;
 
 end Nuntius_World.Web;
