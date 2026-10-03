@@ -117,7 +117,9 @@ package Nuntius_Steps is
       E_Check_Tenth,
       E_Check_Gunzip_Back,
       E_Check_Unpack_Back,
-      E_Check_Packed_Word);
+      E_Check_Packed_Word,
+      E_Listened,
+      E_Adoption_Settled);
 
    subtype Web_Step is
      Step_Kind range E_Start_Server .. E_Check_Length_Matches;
@@ -131,7 +133,6 @@ package Nuntius_Steps is
    --  A request being composed: its head so far, its body, and how long
    --  after the head the body follows.  It goes out at the first check.
    type Pending_Request is record
-      Waiting : Boolean := False;
       Head    : Unbounded_String;
       Content : Unbounded_String;
       Tail_Ms : Natural := 0;
