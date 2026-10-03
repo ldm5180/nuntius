@@ -145,7 +145,13 @@ them.  A reply is kept whole in the context (`Last_Reply`), and every
 |---|---|---|
 | `a serving loop on loopback` | `Start_Server` | `Serve ("127.0.0.1", 0)` on the world's task; `Await_Port` |
 | `a serving loop that compresses when offered` | `Start_Gzip_Server` | the `Compress_When_Offered` instance |
-| `a serving loop whose {word} target takes upgrades` | `Start_Stream_Server` | the `Accepts_Upgrade`/`Adopt` instance |
+| `a serving loop that takes upgrades on {word}` | `Start_Stream_Server` | the `Accepts_Upgrade`/`Adopt` instance; any target but `/api/stream` fails the step |
+| `a serving loop that compresses when offered and takes upgrades on {word}` | `Start_Deflate_Server` | the same with `Compress_When_Offered` |
+| `the client upgrades to {word}` | `Send_Upgrade` | `Upgrade_Reply` with no offer |
+| `the client upgrades to {word} offering {string}` | `Send_Offer` | `Upgrade_Reply` with the offer |
+| `the reply carries no {string}` | `Check_Lacks` | its absence |
+| `the handler saw it as an upgrade` / `did not see an upgrade` | `Check_Saw_Upgrade` / `Check_No_Upgrade` | `Cells.Saw_Upgrade` |
+| `no socket was adopted` | `Check_Not_Adopted` | `Cells.Adopted = 0` |
 | `a serving loop with a 1-second connection budget` | `Start_Short_Server` | the `Connection_Seconds => 1` instance, the only budget the features use |
 | `the client sends a {word} to {word}` | `Send_Request` | a well-formed head from method and target, sent at the first "Then" |
 | `with header {string}` | `Add_Header` | appended to the pending head |
@@ -156,10 +162,9 @@ them.  A reply is kept whole in the context (`Last_Reply`), and every
 | `the client sends the bytes named {word}` | `Send_Named_Bytes` | `tests/features/bytes/<name>.hex`, decoded, sent verbatim (section 3.2) |
 | `the client sends half a head and hangs up` | `Send_Half` | `Exchange (..., Half_Head => True)` |
 | `the client dribbles one byte every {int} ms` | `Send_Dribble` | the dribble writer the suite has |
-| `the reply status is {int}` | `Check_Status` | `Has (Last_Reply, Status_Line (S))` by the number |
+| `the reply status is {int}` | `Check_Status` | `HTTP/1.1 <code> ` in the reply (the 101 is no `Nuntius.Web.Status`) |
 | `the reply carries {string}` | `Check_Carries` | substring of the reply |
 | `the handler received {string}` | `Check_Carries` | the same check, read as the echo |
-| `the reply carries no {word} header` | `Check_No_Header` | its absence |
 | `the reply body is the gzip of the payload` | `Check_Gunzip` | `Test_Payloads.Gunzip (Body_Of (Last_Reply))` |
 | `no reply arrives` | `Check_Silent` | `Last_Reply'Length = 0` |
 | `the handler saw {int} request(s)` | `Check_Handled` | `Cells.Handled` |
@@ -646,3 +651,9 @@ session scratchpad, GNAT 15.2.0, gprbuild 26.0.1, 2026-10-03:
   body`.  The 413 scenario sends `Content-Length: 5000` and no body --
   the claim is what the loop refuses, as the unit test always sent
   it.  The connection-budget step names the one budget that exists.
+- **During F4 (2026-10-03):** a `/` after a word letter in a fabula
+  pattern starts a choice (`api/stream` is "api" or "stream") and is
+  not escapable, so a path is a `{word}` capture; the loop steps fail
+  for any target but the one the world takes.  The status check
+  matches `HTTP/1.1 <code> ` directly, since 101 is not a status of
+  `Nuntius.Web`.
