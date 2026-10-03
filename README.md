@@ -93,7 +93,8 @@ adapter uses — gnatprove analyses a generic only through its instances.
 
 ```sh
 make build    # build the library
-make test     # AUnit suite, both -O modes (loopback refusals only, no network)
+make test     # AUnit suite, both -O modes (loopback only, no network)
+make features # the Gherkin features in tests/features/, both -O modes
 make prove    # SPARK proof, --checks-as-errors=on
 make format   # gnatformat --check
 make example  # build the demo mains both ways (CI builds them, running is manual)

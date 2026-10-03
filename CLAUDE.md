@@ -18,7 +18,10 @@ reception always mean "reconnect-worthy".
 
 - `make build`   — build the library (`alr build`)
 - `make test`    — AUnit suite in BOTH modes (release -O3, debug -O0);
-  no network beyond loopback connection-refusals
+  no network beyond loopback
+- `make features` — the Gherkin features under `tests/features/` in both
+  modes, on fabula; checks the summary line, since fabula exits 0 for
+  a missing path.  `alr test` runs them too
 - `make prove`   — SPARK proof, `--checks-as-errors=on`; must exit 0
 - `make format`  — `gnatformat --check` over all committed Ada sources
 - `make example` — build the demo mains both ways (CI builds, never runs them:
@@ -60,7 +63,12 @@ reception always mean "reconnect-worthy".
   `Content-Encoding` and permessage-deflate's pack/unpack of one
   message, never raising -- a failure is an empty result or a verdict
   and the caller sends plain.
-- `tests/` — AUnit suite (`test_nuntius.gpr`, driver `test_runner.adb`).
+- `tests/` — AUnit suite (`test_nuntius.gpr`, driver `test_runner.adb`)
+  and the features: `tests/features/*.feature` run by
+  `nuntius_features.ads` (Fabula.Main over `Nuntius_Steps`, one child
+  per feature).  Both binaries share `Nuntius_World`, the loopback
+  peers, servers and dialers; bytes a feature line cannot hold are
+  named flat files under `tests/features/bytes/<name>.hex`.
 - `example/` — standalone demo mains (`http_get`, `ws_listen`) showing the
   consumer story end to end; built in CI, run manually against real
   endpoints.
@@ -89,8 +97,12 @@ reception always mean "reconnect-worthy".
 - One `<unit>_tests.ads/.adb` pair per library unit under `tests/src/`,
   registered in `nuntius_suite.adb`. Test routines use
   `AUnit.Assertions.Assert` and are wired via `Register_Routine`.
-- Tests stay off the network: adapter tests use loopback
-  connection-refusals only; everything else is pure.
+- Tests stay off the network: loopback only, port 0, never a fixed
+  port and never a real endpoint -- adapter tests and features alike.
+- A feature says a behavior in the operator's words and checks one
+  fact per step; the unit test keeps the mechanism.  A step a world
+  cannot honor (a client shape it has no instance of, an upgrade
+  target it does not take) fails, rather than pretending.
 
 ## Programming best practices
 

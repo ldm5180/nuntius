@@ -1,5 +1,11 @@
 # Feature tests plan
 
+Status: implemented 2026-10-03 on branch `feature-tests` -- six
+features, 61 scenarios, every one passing in both modes.  The
+"During F3" through "During F7" revision notes record where the code
+departed from the text below, and the text was brought back in line
+each time.
+
 The crate's behavior, stated in Gherkin and run against the real
 adapters over loopback sockets.  `*.feature` files under
 `tests/features/` say what a transport does -- a refused dial reports
