@@ -1,4 +1,6 @@
+with Nuntius_Steps.Http;
 with Nuntius_Steps.Web;
+with Nuntius_World.Http;
 with Nuntius_World.Web;
 
 package body Nuntius_Steps is
@@ -13,8 +15,11 @@ package body Nuntius_Steps is
       pragma Unreferenced (Info);
    begin
       case S is
-         when Web_Step =>
+         when Web_Step  =>
             Nuntius_Steps.Web.Execute (S, Ctx, A, R);
+
+         when Http_Step =>
+            Nuntius_Steps.Http.Execute (S, Ctx, A, R);
       end case;
    end Execute;
 
@@ -30,6 +35,7 @@ package body Nuntius_Steps is
          when Fresh_World =>
             Ctx := (others => <>);
             Nuntius_World.Web.Cells.Reset;
+            Nuntius_World.Http.Renew_Client;
 
          when Stop_World  =>
             Nuntius_World.Web.Stop_Loops;

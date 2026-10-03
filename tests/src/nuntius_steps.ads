@@ -1,5 +1,8 @@
 with Ada.Strings.Unbounded;
 
+with Nuntius.Http;
+with Nuntius.Http.Fetch;
+
 with Fabula.Args;
 with Fabula.Check;
 with Fabula.Frames;
@@ -36,9 +39,29 @@ package Nuntius_Steps is
       Check_Adopted,
       Check_Not_Adopted,
       Check_Saw_Upgrade,
-      Check_No_Upgrade);
+      Check_No_Upgrade,
+      Set_Agent,
+      Curl_Refused,
+      Curl_Recorded,
+      Fetch_Recorded,
+      Fetch_Pump,
+      Fetch_Start,
+      Fetch_Cancel,
+      Fetch_Until_Done,
+      Fetch_Fill,
+      Check_Response_Failure,
+      Check_Response_Status,
+      Check_Wire,
+      Check_Completion_Status,
+      Check_No_Completion,
+      Check_In_Flight,
+      Check_Completion_Failure,
+      Check_Within,
+      Check_Start_Refused,
+      Check_All_Complete);
 
    subtype Web_Step is Step_Kind range Start_Server .. Check_No_Upgrade;
+   subtype Http_Step is Step_Kind range Set_Agent .. Check_All_Complete;
 
    type Hook_Kind is (Fresh_World, Stop_World);
 
@@ -51,12 +74,26 @@ package Nuntius_Steps is
       Tail_Ms : Natural := 0;
    end record;
 
+   --  What the HTTP clients answered: the sync response, the async
+   --  completion and how long it took, and the async table's tally.
+   type Client_Reading is record
+      Response : Nuntius.Http.Response;
+      Done     : Nuntius.Http.Fetch.Completion;
+      Got      : Boolean := False;
+      Id       : Nuntius.Http.Fetch.Request_Id :=
+        Nuntius.Http.Fetch.No_Request;
+      Elapsed  : Duration := 0.0;
+      Started  : Natural := 0;
+      Refused  : Boolean := False;
+   end record;
+
    --  What one scenario reads back.  fabula copies it per step, so it
    --  holds values only; the sockets and tasks live in Nuntius_World.
    type World is record
       Port    : Natural := 0;
       Request : Pending_Request;
       Reply   : Unbounded_String;
+      Client  : Client_Reading;
    end record;
 
    package Steps is new
@@ -94,7 +131,33 @@ package Nuntius_Steps is
       Step ("the handler saw it as an upgrade")               >= Check_Saw_Upgrade,
       Step ("the handler did not see an upgrade")             >= Check_No_Upgrade,
       Step ("the socket was adopted {word}")                  >= Check_Adopted,
-      Step ("no socket was adopted")                          >= Check_Not_Adopted];
+      Step ("no socket was adopted")                          >= Check_Not_Adopted,
+      Step ("the User-Agent is {string}")                     >= Set_Agent,
+      Step ("the curl client sends a {word} to a refused loopback port")
+                                                              >= Curl_Refused,
+      Step ("the curl client sends a GET to a recording peer")
+                                                              >= Curl_Recorded,
+      Step ("the async client sends a GET to a recording peer")
+                                                              >= Fetch_Recorded,
+      Step ("the async client pumps once")                    >= Fetch_Pump,
+      Step ("the async client starts a {word} to a refused loopback port")
+                                                              >= Fetch_Start,
+      Step ("the async client cancels it")                    >= Fetch_Cancel,
+      Step ("the async client pumps and waits until it completes")
+                                                              >= Fetch_Until_Done,
+      Step ("the async client fills its table with GETs to a refused "
+            & "loopback port")                                >= Fetch_Fill,
+      Step ("the response is a transport failure")            >= Check_Response_Failure,
+      Step ("the response status is {int}")                   >= Check_Response_Status,
+      Step ("the request on the wire carried {string}")       >= Check_Wire,
+      Step ("the completion status is {int}")                 >= Check_Completion_Status,
+      Step ("no completion surfaced")                         >= Check_No_Completion,
+      Step ("the async client has {int} transfer(s) in flight")
+                                                              >= Check_In_Flight,
+      Step ("the completion is a transport failure")          >= Check_Completion_Failure,
+      Step ("it surfaced within {int} seconds")               >= Check_Within,
+      Step ("one more start is refused")                      >= Check_Start_Refused,
+      Step ("every started transfer completes")               >= Check_All_Complete];
    --!format on
 
    Hook_Defs : constant Steps.Hook_Table :=
