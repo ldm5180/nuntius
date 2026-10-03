@@ -151,9 +151,10 @@ package Nuntius_Steps is
       Refused  : Boolean := False;
    end record;
 
-   --  What the websocket client answered: the dial, the last reception
-   --  and its text, and the tallies of a run of receives.
+   --  What the websocket client met: the scripted peer's port, the dial,
+   --  the last reception and its text, and a run of receives' tallies.
    type Ws_Reading is record
+      Peer     : Natural := 0;
       Dialed   : Boolean := False;
       Got      : Nuntius.Ws.Reception;
       Message  : Unbounded_String;
