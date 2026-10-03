@@ -4,7 +4,7 @@
 
 package Test_Payloads is
 
-   --  Repetitive JSON, Rows rows of 38 bytes: what a dashboard sends.
+   --  Repetitive JSON, Rows rows of 37 bytes: what a dashboard sends.
    function Json_Like (Rows : Positive) return String;
 
    --  Bytes no deflate can shrink, from a fixed LCG so a test is

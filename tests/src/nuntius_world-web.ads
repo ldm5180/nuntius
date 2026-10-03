@@ -50,7 +50,7 @@ package Nuntius_World.Web is
       Coding_V       : Nuntius.Codings.Message_Coding := Nuntius.Codings.Plain;
    end Cells;
 
-   --  A body worth compressing: 2,280 bytes of repetitive JSON, which
+   --  A body worth compressing: 2,220 bytes of repetitive JSON, which
    --  the echo policy serves on /big.
    Big_Json : constant String := Test_Payloads.Json_Like (60);
 
