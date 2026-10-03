@@ -53,7 +53,7 @@ package Nuntius_World.Browser is
      (Sock : GNAT.Sockets.Socket_Type; Lead : Octet; Payload : Octets);
 
    --  Text's characters as octets.
-   function Bytes_Of (Text : String) return Octets;
+   function Bytes_Of (Text : String) return Octets renames Octets_Of;
 
    --  The scenario's pair: the browser socket, and the peer that adopted
    --  the served end with Coding.  Open_Pair drops any pair before it.

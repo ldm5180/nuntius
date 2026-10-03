@@ -26,4 +26,11 @@ package Nuntius_World is
       Ok     : out Boolean)
    with Pre => Result'First = 1;
 
+   --  B's octets as characters, and S's characters as octets.
+   function Chars_Of (B : Nuntius.Rfc6455.Octets) return String;
+   function Octets_Of (S : String) return Nuntius.Rfc6455.Octets;
+
+   --  N bytes of repetitive JSON, cut from Test_Payloads.Json_Like.
+   function Json_Of (N : Natural) return String;
+
 end Nuntius_World;

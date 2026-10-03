@@ -101,15 +101,6 @@ package body Nuntius_World.Browser is
       Nuntius.Socket_Io.Send_All (Sock, Wire);
    end Browser_Frame;
 
-   function Bytes_Of (Text : String) return Octets is
-      B : Octets (1 .. Text'Length);
-   begin
-      for K in B'Range loop
-         B (K) := Character'Pos (Text (Text'First + K - 1));
-      end loop;
-      return B;
-   end Bytes_Of;
-
    procedure Open_Pair (Coding : Nuntius.Codings.Message_Coding) is
       Served : Socket_Type;
    begin
