@@ -3,6 +3,8 @@ with Fabula.Numbers;
 
 with Nuntius.Codings;
 
+with Test_Payloads;
+
 with Nuntius_World;     use Nuntius_World;
 with Nuntius_World.Web; use Nuntius_World.Web;
 
@@ -186,13 +188,35 @@ package body Nuntius_Steps.Web is
         To_Unbounded_String (Upgrade_Reply (Ctx.Port, Offer, Target));
    end Upgrade;
 
+   --  The body of the reply is the gzip member of Big_Json.
+   procedure Check_Gunzip (Ctx : World; R : in out Fabula.Check.Outcome) is
+      Got : constant String := Body_Of (To_String (Ctx.Reply));
+   begin
+      Fabula.Check.Is_True
+        (R,
+         Test_Payloads.Gunzip (Got, Big_Json'Length + 1) = Big_Json,
+         "the body gunzips to the big JSON");
+   end Check_Gunzip;
+
+   --  The reply's Content-Length names its body's own length.
+   procedure Check_Length (Ctx : World; R : in out Fabula.Check.Outcome) is
+      Reply : constant String := To_String (Ctx.Reply);
+   begin
+      Fabula.Check.Is_True
+        (R,
+         Has
+           (Reply,
+            "Content-Length:" & Natural'Image (Body_Of (Reply)'Length) & CRLF),
+         "the body is" & Natural'Image (Body_Of (Reply)'Length) & " bytes");
+   end Check_Length;
+
    procedure Execute
      (S   : Web_Step;
       Ctx : in out World;
       A   : Fabula.Args.List;
       R   : in out Fabula.Check.Outcome) is
    begin
-      if S in Check_Status .. Check_No_Upgrade then
+      if S in Check_Status .. Check_Length_Matches then
          Flush (Ctx);
       end if;
       case S is
@@ -209,6 +233,9 @@ package body Nuntius_Steps.Web is
          when Start_Deflate_Server =>
             Start_Upgrading
               (Ctx, Deflate_Loop, Fabula.Args.Word (A, First_Capture), R);
+
+         when Start_Gzip_Server    =>
+            Start (Ctx, Gzip_Loop, R);
 
          when Send_Request         =>
             Compose
@@ -284,6 +311,18 @@ package body Nuntius_Steps.Web is
          when Check_No_Upgrade     =>
             Fabula.Check.Is_False
               (R, Cells.Saw_Upgrade, "typed as an upgrade");
+
+         when Check_Gunzips        =>
+            Check_Gunzip (Ctx, R);
+
+         when Check_Big_Body       =>
+            Fabula.Check.Is_True
+              (R,
+               Body_Of (To_String (Ctx.Reply)) = Big_Json,
+               "the body is the big JSON");
+
+         when Check_Length_Matches =>
+            Check_Length (Ctx, R);
       end case;
    end Execute;
 

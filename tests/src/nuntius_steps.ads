@@ -25,6 +25,7 @@ package Nuntius_Steps is
       Start_Short_Server,
       Start_Stream_Server,
       Start_Deflate_Server,
+      Start_Gzip_Server,
       Send_Request,
       Add_Header,
       Add_Body,
@@ -43,6 +44,9 @@ package Nuntius_Steps is
       Check_Not_Adopted,
       Check_Saw_Upgrade,
       Check_No_Upgrade,
+      Check_Gunzips,
+      Check_Big_Body,
+      Check_Length_Matches,
       Set_Agent,
       Curl_Refused,
       Curl_Recorded,
@@ -106,12 +110,20 @@ package Nuntius_Steps is
       Check_Pong_Frame,
       Check_Close_Frame,
       Check_Shut,
-      Check_Send_Fails);
+      Check_Send_Fails,
+      Gzip_Json,
+      Gzip_Noise,
+      Pack_Json,
+      Check_Tenth,
+      Check_Gunzip_Back,
+      Check_Unpack_Back,
+      Check_Packed_Word);
 
-   subtype Web_Step is Step_Kind range Start_Server .. Check_No_Upgrade;
+   subtype Web_Step is Step_Kind range Start_Server .. Check_Length_Matches;
    subtype Http_Step is Step_Kind range Set_Agent .. Check_All_Complete;
    subtype Ws_Step is Step_Kind range Ws_Default .. Check_Lost_Within;
    subtype Peer_Step is Step_Kind range Pair_Plain .. Check_Send_Fails;
+   subtype Coding_Step is Step_Kind range Gzip_Json .. Check_Packed_Word;
 
    type Hook_Kind is (Fresh_World, Stop_World);
 
@@ -160,6 +172,12 @@ package Nuntius_Steps is
       Packed  : Unbounded_String;
    end record;
 
+   --  A round trip through Nuntius.Deflate: the text, and what came out.
+   type Coding_Reading is record
+      Text   : Unbounded_String;
+      Result : Unbounded_String;
+   end record;
+
    --  What one scenario reads back.  fabula copies it per step, so it
    --  holds values only; the sockets and tasks live in Nuntius_World.
    type World is record
@@ -169,6 +187,7 @@ package Nuntius_Steps is
       Client  : Client_Reading;
       Ws      : Ws_Reading;
       Peer    : Peer_Reading;
+      Coding  : Coding_Reading;
    end record;
 
    package Steps is new
@@ -187,6 +206,7 @@ package Nuntius_Steps is
                                                               >= Start_Stream_Server,
       Step ("a serving loop that compresses when offered "
             & "and takes upgrades on {word}")            >= Start_Deflate_Server,
+      Step ("a serving loop that compresses when offered")    >= Start_Gzip_Server,
       Step ("the client sends a {word} to {word}")            >= Send_Request,
       Step ("with header {string}")                           >= Add_Header,
       Step ("with the body arriving {int} ms later")          >= Split_Body,
@@ -207,6 +227,9 @@ package Nuntius_Steps is
       Step ("the handler did not see an upgrade")             >= Check_No_Upgrade,
       Step ("the socket was adopted {word}")                  >= Check_Adopted,
       Step ("no socket was adopted")                          >= Check_Not_Adopted,
+      Step ("the reply body gunzips to the big JSON")         >= Check_Gunzips,
+      Step ("the reply body is the big JSON")                 >= Check_Big_Body,
+      Step ("the reply's Content-Length is its body's")       >= Check_Length_Matches,
       Step ("the User-Agent is {string}")                     >= Set_Agent,
       Step ("the curl client sends a {word} to a refused loopback port")
                                                               >= Curl_Refused,
@@ -287,7 +310,14 @@ package Nuntius_Steps is
       Step ("the browser reads a pong {string}")              >= Check_Pong_Frame,
       Step ("the browser reads a close with code {int}")      >= Check_Close_Frame,
       Step ("the peer is shut")                               >= Check_Shut,
-      Step ("a send from the peer fails")                     >= Check_Send_Fails];
+      Step ("a send from the peer fails")                     >= Check_Send_Fails,
+      Step ("{int} bytes of JSON are gzipped")                >= Gzip_Json,
+      Step ("{int} bytes of noise are gzipped")               >= Gzip_Noise,
+      Step ("{int} bytes of JSON are packed")                 >= Pack_Json,
+      Step ("the result is under a tenth of them")            >= Check_Tenth,
+      Step ("zlib reads the result back whole")               >= Check_Gunzip_Back,
+      Step ("it unpacks to the same text")                    >= Check_Unpack_Back,
+      Step ("{word} was packed")                              >= Check_Packed_Word];
    --!format on
 
    Hook_Defs : constant Steps.Hook_Table :=

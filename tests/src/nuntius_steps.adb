@@ -1,3 +1,4 @@
+with Nuntius_Steps.Codings;
 with Nuntius_Steps.Http;
 with Nuntius_Steps.Web;
 with Nuntius_Steps.Ws_Client;
@@ -17,17 +18,20 @@ package body Nuntius_Steps is
       R    : in out Fabula.Check.Outcome) is
    begin
       case S is
-         when Web_Step  =>
+         when Web_Step    =>
             Nuntius_Steps.Web.Execute (S, Ctx, A, R);
 
-         when Http_Step =>
+         when Http_Step   =>
             Nuntius_Steps.Http.Execute (S, Ctx, A, R);
 
-         when Ws_Step   =>
+         when Ws_Step     =>
             Nuntius_Steps.Ws_Client.Execute (S, Ctx, A, R);
 
-         when Peer_Step =>
+         when Peer_Step   =>
             Nuntius_Steps.Ws_Peer.Execute (S, Ctx, A, Info, R);
+
+         when Coding_Step =>
+            Nuntius_Steps.Codings.Execute (S, Ctx, A, R);
       end case;
    end Execute;
 
