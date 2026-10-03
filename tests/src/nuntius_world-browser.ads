@@ -1,4 +1,8 @@
+with Ada.Strings.Unbounded;
+
 with GNAT.Sockets;
+
+with Nuntius.Codings;
 
 with Nuntius.Rfc6455;
 with Nuntius.Ws.Peer;
@@ -50,5 +54,25 @@ package Nuntius_World.Browser is
 
    --  Text's characters as octets.
    function Bytes_Of (Text : String) return Octets;
+
+   --  The scenario's pair: the browser socket, and the peer that adopted
+   --  the served end with Coding.  Open_Pair drops any pair before it.
+   Browser_Sock : GNAT.Sockets.Socket_Type := GNAT.Sockets.No_Socket;
+   The_Peer     : Peers.Peer;
+
+   procedure Open_Pair (Coding : Nuntius.Codings.Message_Coding);
+
+   --  Close both ends, whatever state they are in.
+   procedure Close_Pair;
+
+   --  One server frame off Sock, of any length form: its first byte,
+   --  whether its mask bit was set, and its payload.  Ok False when the
+   --  socket closed or ran out before the frame did.
+   procedure Read_Server_Frame
+     (Sock    : GNAT.Sockets.Socket_Type;
+      Lead    : out Octet;
+      Masked  : out Boolean;
+      Payload : out Ada.Strings.Unbounded.Unbounded_String;
+      Ok      : out Boolean);
 
 end Nuntius_World.Browser;

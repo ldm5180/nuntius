@@ -1,6 +1,7 @@
 with Nuntius_Steps.Http;
 with Nuntius_Steps.Web;
 with Nuntius_Steps.Ws_Client;
+with Nuntius_Steps.Ws_Peer;
 with Nuntius_World.Http;
 with Nuntius_World.Web;
 with Nuntius_World.Ws_Client;
@@ -13,9 +14,7 @@ package body Nuntius_Steps is
       Ctx  : in out World;
       A    : Fabula.Args.List;
       Info : Fabula.Frames.Frame;
-      R    : in out Fabula.Check.Outcome)
-   is
-      pragma Unreferenced (Info);
+      R    : in out Fabula.Check.Outcome) is
    begin
       case S is
          when Web_Step  =>
@@ -26,6 +25,9 @@ package body Nuntius_Steps is
 
          when Ws_Step   =>
             Nuntius_Steps.Ws_Client.Execute (S, Ctx, A, R);
+
+         when Peer_Step =>
+            Nuntius_Steps.Ws_Peer.Execute (S, Ctx, A, Info, R);
       end case;
    end Execute;
 
@@ -50,6 +52,7 @@ package body Nuntius_Steps is
             Nuntius_World.Web.Drop_Held;
             Nuntius_World.Ws_Client.Drop;
             Nuntius_World.Ws_Script.Stop_Scripted;
+            Nuntius_World.Browser.Close_Pair;
       end case;
    end Run_Hook;
 
