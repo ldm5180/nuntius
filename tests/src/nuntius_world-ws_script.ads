@@ -83,4 +83,15 @@ package Nuntius_World.Ws_Script is
    --  ws://127.0.0.1:<Port><Path>.
    function Url (Port : GNAT.Sockets.Port_Type; Path : String) return String;
 
+   --  A peer on a task the scenario does not scope: started from a step,
+   --  ended by Stop_Scripted in the After hook.
+   procedure Start_Scripted (Plan : Script; Port : out GNAT.Sockets.Port_Type)
+   with Pre => Plan'Length <= Max_Steps;
+
+   --  Wait for the scripted peer to finish, and abort it when it has not
+   --  within three seconds: a peer blocked on a read the client will
+   --  never answer must not hang the run at exit.  Close the client
+   --  first, so a blocked read sees the hangup.
+   procedure Stop_Scripted;
+
 end Nuntius_World.Ws_Script;

@@ -2,6 +2,7 @@ with Ada.Strings.Unbounded;
 
 with Nuntius.Http;
 with Nuntius.Http.Fetch;
+with Nuntius.Ws;
 
 with Fabula.Args;
 with Fabula.Check;
@@ -58,10 +59,30 @@ package Nuntius_Steps is
       Check_Completion_Failure,
       Check_Within,
       Check_Start_Refused,
-      Check_All_Complete);
+      Check_All_Complete,
+      Ws_Default,
+      Ws_Shaped,
+      Ws_Impatient,
+      Start_Peer,
+      Ws_Dial_Refused,
+      Ws_Connect,
+      Ws_Until_Lost,
+      Ws_Receive_For,
+      Ws_Receive_Many,
+      Ws_Receive,
+      Check_Dial_Failed,
+      Check_Reception,
+      Check_Message,
+      Check_Pong,
+      Check_In_Order,
+      Check_Dropped,
+      Check_Oversized,
+      Check_No_Oversized,
+      Check_Lost_Within);
 
    subtype Web_Step is Step_Kind range Start_Server .. Check_No_Upgrade;
    subtype Http_Step is Step_Kind range Set_Agent .. Check_All_Complete;
+   subtype Ws_Step is Step_Kind range Ws_Default .. Check_Lost_Within;
 
    type Hook_Kind is (Fresh_World, Stop_World);
 
@@ -87,6 +108,19 @@ package Nuntius_Steps is
       Refused  : Boolean := False;
    end record;
 
+   --  What the websocket client answered: the dial, the last reception
+   --  and its text, and the tallies of a run of receives.
+   type Ws_Reading is record
+      Dialed   : Boolean := False;
+      Got      : Nuntius.Ws.Reception;
+      Message  : Unbounded_String;
+      Wanted   : Natural := 0;
+      Received : Natural := 0;
+      In_Order : Boolean := True;
+      Calls    : Natural := 0;
+      Timeouts : Natural := 0;
+   end record;
+
    --  What one scenario reads back.  fabula copies it per step, so it
    --  holds values only; the sockets and tasks live in Nuntius_World.
    type World is record
@@ -94,6 +128,7 @@ package Nuntius_Steps is
       Request : Pending_Request;
       Reply   : Unbounded_String;
       Client  : Client_Reading;
+      Ws      : Ws_Reading;
    end record;
 
    package Steps is new
@@ -157,7 +192,34 @@ package Nuntius_Steps is
       Step ("the completion is a transport failure")          >= Check_Completion_Failure,
       Step ("it surfaced within {int} seconds")               >= Check_Within,
       Step ("one more start is refused")                      >= Check_Start_Refused,
-      Step ("every started transfer completes")               >= Check_All_Complete];
+      Step ("every started transfer completes")               >= Check_All_Complete,
+      Step ("a websocket client whose ring holds {int} frames of up to {int} "
+            & "bytes")                                        >= Ws_Shaped,
+      Step ("a websocket client that gives up after 1 second of silence")
+                                                              >= Ws_Impatient,
+      Step ("a websocket client")                             >= Ws_Default,
+      Step ("a scripted websocket peer that sends:")          >= Start_Peer,
+      Step ("the websocket client dials a refused loopback port")
+                                                              >= Ws_Dial_Refused,
+      Step ("the websocket client connects")                  >= Ws_Connect,
+      Step ("the websocket client receives with {int} ms patience until it "
+            & "is lost")                                      >= Ws_Until_Lost,
+      Step ("the websocket client receives with {int} ms patience")
+                                                              >= Ws_Receive_For,
+      Step ("the websocket client receives {int} messages")   >= Ws_Receive_Many,
+      Step ("the websocket client receives")                  >= Ws_Receive,
+      Step ("the dial fails")                                 >= Check_Dial_Failed,
+      Step ("the reception is {word}")                        >= Check_Reception,
+      Step ("the message is {string}")                        >= Check_Message,
+      Step ("the peer saw a pong")                            >= Check_Pong,
+      Step ("every one was delivered, in order")              >= Check_In_Order,
+      Step ("the client counted dropped frames and no oversized one")
+                                                              >= Check_Dropped,
+      Step ("the client counted {int} oversized frame(s), the largest {int} "
+            & "bytes")                                        >= Check_Oversized,
+      Step ("the client counted no oversized frame")          >= Check_No_Oversized,
+      Step ("it was lost within {int} receives, after at least {int} healthy "
+            & "timeouts")                                     >= Check_Lost_Within];
    --!format on
 
    Hook_Defs : constant Steps.Hook_Table :=
