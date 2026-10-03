@@ -20,17 +20,28 @@ test:
 	alr exec -- gprbuild -p -j0 -XMODE=release -P tests/test_nuntius.gpr
 	alr exec -- tests/bin/release/test_runner
 
-## features    Build and run the Gherkin features in both modes.  fabula
-##             exits 0 for a missing path or an empty file, so the
-##             summary line is what says every scenario ran and passed
+## features    Build and run the Gherkin features in both modes, printing
+##             the runner's report as it goes -- in colour when make writes
+##             to a terminal: fabula colours only a terminal, so the runner
+##             then runs under script(1) for a pseudo-terminal while tee
+##             keeps a copy.  fabula exits 0 for a missing path or an empty
+##             file, so the summary line, not the exit status alone, is
+##             what says every scenario passed
 features:
 	alr exec -- gprbuild -p -j0 -XMODE=debug -P tests/test_nuntius.gpr
 	alr exec -- gprbuild -p -j0 -XMODE=release -P tests/test_nuntius.gpr
-	@for mode in debug release; do \
-	  out=$$(alr exec -- tests/bin/$$mode/nuntius_features tests/features) || \
-	    { printf '%s\n' "$$out"; exit 1; }; \
-	  printf '%s\n' "$$out" | grep -qE '^[1-9][0-9]* Scenarios? \([0-9]+ passed\)$$' || \
-	    { printf '%s\n' "$$out"; echo "features: $$mode: a scenario did not pass"; exit 1; }; \
+	@log=$$(mktemp) && rc=$$(mktemp) && trap 'rm -f $$log $$rc' EXIT && \
+	if [ -t 1 ]; then tty=yes; else tty=; fi; \
+	for mode in debug release; do \
+	  echo "== features ($$mode)"; \
+	  run="alr exec -- tests/bin/$$mode/nuntius_features tests/features"; \
+	  { if [ -n "$$tty" ]; then script -qefc "$$run" /dev/null; \
+	    else $$run; fi; echo $$? > $$rc; } | tee $$log; \
+	  [ "$$(cat $$rc)" = 0 ] || \
+	    { echo "features: $$mode: the runner failed"; exit 1; }; \
+	  sed -e 's/\x1b\[[0-9;]*m//g' -e 's/\r$$//' $$log | \
+	    grep -qE '^[1-9][0-9]* Scenarios? \([0-9]+ passed\)$$' || \
+	    { echo "features: $$mode: a scenario did not pass"; exit 1; }; \
 	done; echo 'features: every scenario passed in both modes'
 
 ## prove       Run the SPARK proof (same flags as CI)
