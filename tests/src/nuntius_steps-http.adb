@@ -1,12 +1,12 @@
 with Ada.Real_Time;
 
 with Fabula.Check.Ints;
-with Fabula.Numbers;
 
 with Nuntius.Http.Fetch.Curl;
 
 with Loopback_Capture;
 
+with Nuntius_Steps.Flows;
 with Nuntius_World;      use Nuntius_World;
 with Nuntius_World.Http; use Nuntius_World.Http;
 
@@ -14,9 +14,69 @@ package body Nuntius_Steps.Http is
 
    use Nuntius.Http.Fetch;
 
-   subtype Number is Fabula.Numbers.Integer_Reads.Read;
+   --  Ready until something is sent; then a sync response, an async
+   --  transfer in flight, a pumped completion, or a full table.
+   type State is (Ready, Responded, Started, Completed, Filled);
+
+   type Guard_Kind is (Always, Verb_Known, Method_Known, Limit_Read);
+
+   type Action_Kind is
+     (A_Nothing,
+      A_Set_Agent,
+      A_Send_Refused,
+      A_Refuse_Verb,
+      A_Recorded_Get,
+      A_Recorded_Fetch,
+      A_Pump,
+      A_Start_Refused,
+      A_Refuse_Method,
+      A_Cancel,
+      A_Wait,
+      A_Fill,
+      A_Check_Response_Failure,
+      A_Check_Response_Status,
+      A_Check_Wire,
+      A_Check_Completion_Status,
+      A_Check_No_Completion,
+      A_Check_In_Flight,
+      A_Check_Completion_Failure,
+      A_Check_Within,
+      A_Refuse_Limit,
+      A_Check_Start_Refused,
+      A_Check_All_Complete);
 
    First_Capture : constant := 1;
+
+   function Word (Ctx : Step_Context) return String
+   is (Fabula.Args.Word (Ctx.A, First_Capture));
+
+   function Is_Verb (Word : String) return Boolean is
+      V     : Nuntius_World.Http.Verb;
+      Found : Boolean;
+   begin
+      Verb_Named (Word, V, Found);
+      return Found;
+   end Is_Verb;
+
+   function Is_Method (Word : String) return Boolean
+   is (for some M in Method => M'Image = Word);
+
+   function Evaluate
+     (G : Guard_Kind; Ctx : Step_Context; Evt : Step_Kind) return Boolean
+   is
+      pragma Unreferenced (Evt);
+   begin
+      return
+        (case G is
+           when Always       => True,
+           when Verb_Known   => Is_Verb (Word (Ctx)),
+           when Method_Known => Is_Method (Word (Ctx)),
+           when Limit_Read   => Count_Read (Ctx));
+   end Evaluate;
+
+   ---------------------------------------------------------------------
+   --  Actions.
+   ---------------------------------------------------------------------
 
    function Since (T0 : Ada.Real_Time.Time) return Duration
    is (Ada.Real_Time.To_Duration
@@ -29,53 +89,38 @@ package body Nuntius_Steps.Http is
    function Status_Text (Result : Nuntius.Http.Response) return String
    is ("Ok " & Result.Ok'Image & ", Status" & Result.Status'Image);
 
-   procedure Send_Refused
-     (Ctx : in out World; Word : String; R : in out Fabula.Check.Outcome)
+   procedure Send_Refused (Ctx : in out Step_Context)
+   with Pre => Is_Verb (Word (Ctx))
    is
       V     : Nuntius_World.Http.Verb;
       Found : Boolean;
    begin
-      Verb_Named (Word, V, Found);
-      if Found then
-         Ctx.Client.Response := Send (V, Refused_URL);
-      else
-         Fabula.Check.Fail_Step (R, "no curl verb named " & Word);
-      end if;
+      Verb_Named (Word (Ctx), V, Found);
+      Ctx.W.Client.Response := Send (V, Refused_URL);
    end Send_Refused;
 
-   procedure Start_Refused
-     (Ctx : in out World; Word : String; R : in out Fabula.Check.Outcome) is
-   begin
-      Async.Start
-        (Request_For (Method'Value (Word), Refused_URL), Ctx.Client.Id);
-   exception
-      when Constraint_Error =>
-         Fabula.Check.Fail_Step (R, "no async method named " & Word);
-   end Start_Refused;
-
-   procedure Wait_For_Completion (Ctx : in out World) is
+   procedure Wait_For_Completion (Ctx : in out Step_Context) is
       T0 : constant Ada.Real_Time.Time := Ada.Real_Time.Clock;
    begin
-      Pump_Until_Done (Ctx.Client.Done, Ctx.Client.Got);
-      Ctx.Client.Elapsed := Since (T0);
+      Pump_Until_Done (Ctx.W.Client.Done, Ctx.W.Client.Got);
+      Ctx.W.Client.Elapsed := Since (T0);
    end Wait_For_Completion;
 
    --  Start transfers until the table is full, then one more.
-   procedure Fill (Ctx : in out World) is
+   procedure Fill (Ctx : in out Step_Context) is
       Id : Request_Id;
    begin
       for K in 1 .. Nuntius.Http.Fetch.Curl.Max_In_Flight loop
          Async.Start (Request_For (Get, Refused_URL), Id);
-         if Id /= No_Request then
-            Ctx.Client.Started := Ctx.Client.Started + 1;
-         end if;
+         Ctx.W.Client.Started :=
+           Ctx.W.Client.Started + (if Id = No_Request then 0 else 1);
       end loop;
       Async.Start (Request_For (Get, Refused_URL), Id);
-      Ctx.Client.Refused := Id = No_Request;
+      Ctx.W.Client.Refused := Id = No_Request;
    end Fill;
 
    --  Every started transfer completed, and the table drained.
-   procedure Check_Drained (Ctx : World; R : in out Fabula.Check.Outcome) is
+   procedure Check_Drained (Ctx : in out Step_Context) is
       Done : Completion;
       Got  : Boolean;
       Seen : Natural := 0;
@@ -85,126 +130,211 @@ package body Nuntius_Steps.Http is
          exit when not Got;
          Seen := Seen + 1;
       end loop;
-      Fabula.Check.Ints.Equal (R, Seen, Ctx.Client.Started, "completions");
-      Fabula.Check.Ints.Equal (R, Async.In_Flight, 0, "in flight after");
+      Fabula.Check.Ints.Equal
+        (Ctx.R, Seen, Ctx.W.Client.Started, "completions");
+      Fabula.Check.Ints.Equal (Ctx.R, Async.In_Flight, 0, "in flight after");
    end Check_Drained;
 
-   procedure Check_Seconds
-     (Ctx : World; Limit : Number; R : in out Fabula.Check.Outcome) is
+   procedure Check_Status_Of
+     (Ctx : in out Step_Context; Result : Nuntius.Http.Response) is
    begin
-      if Limit.Ok then
-         Fabula.Check.Is_True
-           (R,
-            Ctx.Client.Elapsed < Duration (Limit.Value),
-            "took" & Ctx.Client.Elapsed'Image & " s");
-      else
-         Fabula.Check.Ints.Fail_Read (R, Limit.Error);
-      end if;
-   end Check_Seconds;
+      Fabula.Check.Ints.Equal
+        (Ctx.R,
+         Nuntius.Http.Reported_Status (Result),
+         Fabula.Args.Int (Ctx.A, First_Capture),
+         "status");
+   end Check_Status_Of;
 
    procedure Execute
-     (S   : Http_Step;
-      Ctx : in out World;
-      A   : Fabula.Args.List;
-      R   : in out Fabula.Check.Outcome) is
+     (A : Action_Kind; Ctx : in out Step_Context; Evt : Step_Kind)
+   is
+      pragma Unreferenced (Evt);
    begin
-      case S is
-         when E_Set_Agent                =>
-            Nuntius.Http.Set_User_Agent (Fabula.Args.Text (A, First_Capture));
+      case A is
+         when A_Nothing                  =>
+            null;
 
-         when E_Curl_Refused             =>
-            Send_Refused (Ctx, Fabula.Args.Word (A, First_Capture), R);
+         when A_Set_Agent                =>
+            Nuntius.Http.Set_User_Agent
+              (Fabula.Args.Text (Ctx.A, First_Capture));
 
-         when E_Curl_Recorded            =>
-            Ctx.Client.Response := Recorded_Get;
+         when A_Send_Refused             =>
+            Send_Refused (Ctx);
 
-         when E_Fetch_Recorded           =>
-            Recorded_Fetch (Ctx.Client.Done, Ctx.Client.Got);
+         when A_Refuse_Verb              =>
+            Fabula.Check.Fail_Step (Ctx.R, "no curl verb named " & Word (Ctx));
 
-         when E_Fetch_Pump               =>
-            Async.Pump (Ctx.Client.Done, Ctx.Client.Got);
+         when A_Recorded_Get             =>
+            Ctx.W.Client.Response := Recorded_Get;
 
-         when E_Fetch_Start              =>
-            Start_Refused (Ctx, Fabula.Args.Word (A, First_Capture), R);
+         when A_Recorded_Fetch           =>
+            Recorded_Fetch (Ctx.W.Client.Done, Ctx.W.Client.Got);
 
-         when E_Fetch_Cancel             =>
-            Async.Cancel (Ctx.Client.Id);
+         when A_Pump                     =>
+            Async.Pump (Ctx.W.Client.Done, Ctx.W.Client.Got);
 
-         when E_Fetch_Until_Done         =>
+         when A_Start_Refused            =>
+            Async.Start
+              (Request_For (Method'Value (Word (Ctx)), Refused_URL),
+               Ctx.W.Client.Id);
+
+         when A_Refuse_Method            =>
+            Fabula.Check.Fail_Step
+              (Ctx.R, "no async method named " & Word (Ctx));
+
+         when A_Cancel                   =>
+            Async.Cancel (Ctx.W.Client.Id);
+
+         when A_Wait                     =>
             Wait_For_Completion (Ctx);
 
-         when E_Fetch_Fill               =>
+         when A_Fill                     =>
             Fill (Ctx);
 
-         when E_Check_Response_Failure   =>
+         when A_Check_Response_Failure   =>
             Fabula.Check.Is_True
-              (R,
-               Failed (Ctx.Client.Response),
-               Status_Text (Ctx.Client.Response));
+              (Ctx.R,
+               Failed (Ctx.W.Client.Response),
+               Status_Text (Ctx.W.Client.Response));
 
-         when E_Check_Response_Status    =>
-            Fabula.Check.Ints.Equal
-              (R,
-               Nuntius.Http.Reported_Status (Ctx.Client.Response),
-               Fabula.Args.Int (A, First_Capture),
-               "status");
+         when A_Check_Response_Status    =>
+            Check_Status_Of (Ctx, Ctx.W.Client.Response);
 
-         when E_Check_Wire               =>
+         when A_Check_Wire               =>
             Fabula.Check.Is_True
-              (R,
+              (Ctx.R,
                Has
-                 (Loopback_Capture.Head, Fabula.Args.Text (A, First_Capture)),
+                 (Loopback_Capture.Head,
+                  Fabula.Args.Text (Ctx.A, First_Capture)),
                "the head was: " & Head_Line (Loopback_Capture.Head));
 
-         when E_Check_Completion_Status  =>
-            Fabula.Check.Is_True (R, Ctx.Client.Got, "a completion surfaced");
-            Fabula.Check.Ints.Equal
-              (R,
-               Nuntius.Http.Reported_Status (Ctx.Client.Done.Result),
-               Fabula.Args.Int (A, First_Capture),
-               "status");
+         when A_Check_Completion_Status  =>
+            Fabula.Check.Is_True
+              (Ctx.R, Ctx.W.Client.Got, "a completion surfaced");
+            Check_Status_Of (Ctx, Ctx.W.Client.Done.Result);
 
-         when E_Check_No_Completion      =>
-            Fabula.Check.Is_False (R, Ctx.Client.Got, "a completion surfaced");
+         when A_Check_No_Completion      =>
+            Fabula.Check.Is_False
+              (Ctx.R, Ctx.W.Client.Got, "a completion surfaced");
 
-         when E_Check_In_Flight          =>
+         when A_Check_In_Flight          =>
             Fabula.Check.Ints.Equal
-              (R,
+              (Ctx.R,
                Async.In_Flight,
-               Fabula.Args.Int (A, First_Capture),
+               Fabula.Args.Int (Ctx.A, First_Capture),
                "in flight");
 
-         when E_Check_Completion_Failure =>
-            Fabula.Check.Is_True (R, Ctx.Client.Got, "a completion surfaced");
+         when A_Check_Completion_Failure =>
             Fabula.Check.Is_True
-              (R,
-               Failed (Ctx.Client.Done.Result),
-               Status_Text (Ctx.Client.Done.Result));
-
-         when E_Check_Within             =>
-            Check_Seconds (Ctx, Fabula.Args.Int (A, First_Capture), R);
-
-         when E_Check_Start_Refused      =>
+              (Ctx.R, Ctx.W.Client.Got, "a completion surfaced");
             Fabula.Check.Is_True
-              (R, Ctx.Client.Refused, "the start past the table's bound");
+              (Ctx.R,
+               Failed (Ctx.W.Client.Done.Result),
+               Status_Text (Ctx.W.Client.Done.Result));
 
-         when E_Check_All_Complete       =>
-            Check_Drained (Ctx, R);
+         when A_Check_Within             =>
+            Fabula.Check.Is_True
+              (Ctx.R,
+               Ctx.W.Client.Elapsed < Duration (Count (Ctx)),
+               "took" & Ctx.W.Client.Elapsed'Image & " s");
+
+         when A_Refuse_Limit             =>
+            Refuse_Count (Ctx);
+
+         when A_Check_Start_Refused      =>
+            Fabula.Check.Is_True
+              (Ctx.R,
+               Ctx.W.Client.Refused,
+               "the start past the table's bound");
+
+         when A_Check_All_Complete       =>
+            Check_Drained (Ctx);
       end case;
    end Execute;
+
+   ---------------------------------------------------------------------
+   --  The table.
+   ---------------------------------------------------------------------
+
+   package Flow is new
+     Nuntius_Steps.Flows
+       (State       => State,
+        Guard_Kind  => Guard_Kind,
+        Action_Kind => Action_Kind,
+        Evaluate    => Evaluate,
+        Execute     => Execute,
+        Always      => Always,
+        Nothing     => A_Nothing);
+
+   use Flow.Machines;
+   use Flow.Op;
+
+   Set_Agent                : constant Ev := (Kind => E_Set_Agent);
+   Curl_Refused             : constant Ev := (Kind => E_Curl_Refused);
+   Curl_Recorded            : constant Ev := (Kind => E_Curl_Recorded);
+   Fetch_Recorded           : constant Ev := (Kind => E_Fetch_Recorded);
+   Fetch_Pump               : constant Ev := (Kind => E_Fetch_Pump);
+   Fetch_Start              : constant Ev := (Kind => E_Fetch_Start);
+   Fetch_Cancel             : constant Ev := (Kind => E_Fetch_Cancel);
+   Fetch_Until_Done         : constant Ev := (Kind => E_Fetch_Until_Done);
+   Fetch_Fill               : constant Ev := (Kind => E_Fetch_Fill);
+   Check_Response_Failure   : constant Ev :=
+     (Kind => E_Check_Response_Failure);
+   Check_Response_Status    : constant Ev := (Kind => E_Check_Response_Status);
+   Check_Wire               : constant Ev := (Kind => E_Check_Wire);
+   Check_Completion_Status  : constant Ev :=
+     (Kind => E_Check_Completion_Status);
+   Check_No_Completion      : constant Ev := (Kind => E_Check_No_Completion);
+   Check_In_Flight          : constant Ev := (Kind => E_Check_In_Flight);
+   Check_Completion_Failure : constant Ev :=
+     (Kind => E_Check_Completion_Failure);
+   Check_Within             : constant Ev := (Kind => E_Check_Within);
+   Check_Start_Refused      : constant Ev := (Kind => E_Check_Start_Refused);
+   Check_All_Complete       : constant Ev := (Kind => E_Check_All_Complete);
+
+   --!format off
+   Table : constant Transition_Table :=
+     [Ready     + Set_Agent                  / A_Set_Agent                >= Ready,
+      Ready     + Curl_Refused (Verb_Known)  / A_Send_Refused             >= Responded,
+      Ready     + Curl_Refused               / A_Refuse_Verb              >= Ready,
+      Ready     + Curl_Recorded              / A_Recorded_Get             >= Responded,
+      Ready     + Fetch_Recorded             / A_Recorded_Fetch           >= Completed,
+      Ready     + Fetch_Pump                 / A_Pump                     >= Completed,
+      Ready     + Fetch_Start (Method_Known) / A_Start_Refused            >= Started,
+      Ready     + Fetch_Start                / A_Refuse_Method            >= Ready,
+      Ready     + Fetch_Fill                 / A_Fill                     >= Filled,
+      Responded + Check_Response_Failure     / A_Check_Response_Failure   >= Responded,
+      Responded + Check_Response_Status      / A_Check_Response_Status    >= Responded,
+      Responded + Check_Wire                 / A_Check_Wire               >= Responded,
+      Started   + Fetch_Cancel               / A_Cancel                   >= Started,
+      Started   + Fetch_Pump                 / A_Pump                     >= Completed,
+      Started   + Fetch_Until_Done           / A_Wait                     >= Completed,
+      Started   + Check_In_Flight            / A_Check_In_Flight          >= Started,
+      Completed + Check_Completion_Status    / A_Check_Completion_Status  >= Completed,
+      Completed + Check_Completion_Failure   / A_Check_Completion_Failure >= Completed,
+      Completed + Check_No_Completion        / A_Check_No_Completion      >= Completed,
+      Completed + Check_In_Flight            / A_Check_In_Flight          >= Completed,
+      Completed + Check_Wire                 / A_Check_Wire               >= Completed,
+      Completed + Check_Within (Limit_Read)  / A_Check_Within             >= Completed,
+      Completed + Check_Within               / A_Refuse_Limit             >= Completed,
+      Filled    + Check_Start_Refused        / A_Check_Start_Refused      >= Filled,
+      Filled    + Check_All_Complete         / A_Check_All_Complete       >= Filled];
+   --!format on
+
+   Current : State := Ready;
 
    procedure Offer
      (Ctx : in out Step_Context; Evt : Step_Kind; Handled : out Boolean) is
    begin
-      Handled := Evt in Http_Step;
-      if Handled then
-         Execute (Evt, Ctx.W, Ctx.A, Ctx.R);
-      end if;
+      Flow.Take (Table, Current, Ctx, Evt, Handled);
    end Offer;
 
-   procedure Reset is null;
+   procedure Reset is
+   begin
+      Current := Ready;
+   end Reset;
 
    function Phase return String
-   is ("-");
+   is (Current'Image);
 
 end Nuntius_Steps.Http;
