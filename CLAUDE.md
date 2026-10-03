@@ -65,8 +65,11 @@ reception always mean "reconnect-worthy".
   and the caller sends plain.
 - `tests/` — AUnit suite (`test_nuntius.gpr`, driver `test_runner.adb`)
   and the features: `tests/features/*.feature` run by
-  `nuntius_features.ads` (Fabula.Main over `Nuntius_Steps`, one child
-  per feature).  Both binaries share `Nuntius_World`, the loopback
+  `nuntius_features.ads` (Fabula.Main over `Nuntius_Steps`).  Each
+  feature's steps are an sml machine in its own child -- steps are its
+  events, the conditions that choose a body its guards, the bodies its
+  actions -- run by `Nuntius_Steps.Flows`; the registry offers every
+  step to each feature as a region, and a step none takes fails.  Both binaries share `Nuntius_World`, the loopback
   peers, servers and dialers; bytes a feature line cannot hold are
   named flat files under `tests/features/bytes/<name>.hex`.
 - `example/` — standalone demo mains (`http_get`, `ws_listen`) showing the
