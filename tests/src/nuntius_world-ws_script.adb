@@ -1,4 +1,5 @@
 with Ada.Strings.Fixed;
+with Ada.Unchecked_Deallocation;
 
 package body Nuntius_World.Ws_Script is
 
@@ -189,5 +190,44 @@ package body Nuntius_World.Ws_Script is
    is ("ws://127.0.0.1:"
        & Ada.Strings.Fixed.Trim (Port_Type'Image (Port), Ada.Strings.Both)
        & Path);
+
+   type Peer_Access is access Peer;
+
+   procedure Free is new Ada.Unchecked_Deallocation (Peer, Peer_Access);
+
+   Scripted : Peer_Access;
+
+   --  How long Stop_Scripted lets a peer finish before aborting it.
+   Finish_Polls : constant := 300;
+   Finish_Slice : constant Duration := 0.01;
+
+   procedure Start_Scripted (Plan : Script; Port : out GNAT.Sockets.Port_Type)
+   is
+   begin
+      Stop_Scripted;
+      Scripted := new Peer;
+      Port := Start (Scripted, Plan);
+   end Start_Scripted;
+
+   procedure Await_Finish is
+   begin
+      for K in 1 .. Finish_Polls loop
+         exit when Scripted'Terminated;
+         delay Finish_Slice;
+      end loop;
+   end Await_Finish;
+
+   procedure Stop_Scripted is
+   begin
+      if Scripted = null then
+         return;
+      end if;
+      Await_Finish;
+      if not Scripted'Terminated then
+         abort Scripted.all;
+         Await_Finish;
+      end if;
+      Free (Scripted);
+   end Stop_Scripted;
 
 end Nuntius_World.Ws_Script;
