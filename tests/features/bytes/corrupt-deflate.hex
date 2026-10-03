@@ -1,0 +1,4 @@
+# A deflate stream zlib must refuse: the first block header's two type
+# bits are 11, the reserved block type (RFC 1951 3.2.3).  What
+# Test_Packed_Inbound_Faults sends to get a 1007 back.
+ff ff

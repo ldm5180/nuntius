@@ -4,6 +4,8 @@ with Nuntius.Http;
 with Nuntius.Http.Fetch;
 with Nuntius.Ws;
 
+with Nuntius_World.Browser;
+
 with Fabula.Args;
 with Fabula.Check;
 with Fabula.Frames;
@@ -78,11 +80,38 @@ package Nuntius_Steps is
       Check_Dropped,
       Check_Oversized,
       Check_No_Oversized,
-      Check_Lost_Within);
+      Check_Lost_Within,
+      Pair_Plain,
+      Pair_Deflated,
+      Peer_Send_Big,
+      Peer_Send_Packed,
+      Peer_Send_Text,
+      Browser_Ping,
+      Browser_Close,
+      Browser_Long,
+      Browser_Binary,
+      Browser_Rsv1,
+      Browser_Ping_Rsv1,
+      Browser_Packed_Json,
+      Browser_Packed_Zeros,
+      Browser_Named,
+      Browser_Json,
+      Browser_Hangs_Up,
+      Peer_Pump,
+      Check_Pump,
+      Check_Read_Sent,
+      Check_Text_Frame,
+      Check_Text_Length,
+      Check_Packed_Frame,
+      Check_Pong_Frame,
+      Check_Close_Frame,
+      Check_Shut,
+      Check_Send_Fails);
 
    subtype Web_Step is Step_Kind range Start_Server .. Check_No_Upgrade;
    subtype Http_Step is Step_Kind range Set_Agent .. Check_All_Complete;
    subtype Ws_Step is Step_Kind range Ws_Default .. Check_Lost_Within;
+   subtype Peer_Step is Step_Kind range Pair_Plain .. Check_Send_Fails;
 
    type Hook_Kind is (Fresh_World, Stop_World);
 
@@ -121,6 +150,16 @@ package Nuntius_Steps is
       Timeouts : Natural := 0;
    end record;
 
+   --  What the served end did: the last pump's outcome and message,
+   --  what the browser sent, and what the peer packed.
+   type Peer_Reading is record
+      Outcome : Nuntius_World.Browser.Peers.Pump_Outcome :=
+        Nuntius_World.Browser.Peers.Nothing;
+      Read    : Unbounded_String;
+      Sent    : Unbounded_String;
+      Packed  : Unbounded_String;
+   end record;
+
    --  What one scenario reads back.  fabula copies it per step, so it
    --  holds values only; the sockets and tasks live in Nuntius_World.
    type World is record
@@ -129,6 +168,7 @@ package Nuntius_Steps is
       Reply   : Unbounded_String;
       Client  : Client_Reading;
       Ws      : Ws_Reading;
+      Peer    : Peer_Reading;
    end record;
 
    package Steps is new
@@ -219,7 +259,35 @@ package Nuntius_Steps is
             & "bytes")                                        >= Check_Oversized,
       Step ("the client counted no oversized frame")          >= Check_No_Oversized,
       Step ("it was lost within {int} receives, after at least {int} healthy "
-            & "timeouts")                                     >= Check_Lost_Within];
+            & "timeouts")                                     >= Check_Lost_Within,
+      Step ("a deflated websocket pair")                      >= Pair_Deflated,
+      Step ("a websocket pair")                               >= Pair_Plain,
+      Step ("the peer sends a {int}-byte message")            >= Peer_Send_Big,
+      Step ("the peer sends {int} bytes of JSON, packed")     >= Peer_Send_Packed,
+      Step ("the peer sends {string}")                        >= Peer_Send_Text,
+      Step ("the browser sends a ping with RSV1 set")         >= Browser_Ping_Rsv1,
+      Step ("the browser sends a ping {string}")              >= Browser_Ping,
+      Step ("the browser sends a close with code {int}")      >= Browser_Close,
+      Step ("the browser sends a {int}-byte text message")    >= Browser_Long,
+      Step ("the browser sends a binary frame")               >= Browser_Binary,
+      Step ("the browser sends a text frame with RSV1 set")   >= Browser_Rsv1,
+      Step ("the browser sends {int} bytes of JSON, packed")  >= Browser_Packed_Json,
+      Step ("the browser sends {int} zeros, packed")          >= Browser_Packed_Zeros,
+      Step ("the browser sends the bytes named {word} as a packed frame")
+                                                              >= Browser_Named,
+      Step ("the browser sends the text {}")                  >= Browser_Json,
+      Step ("the browser hangs up")                           >= Browser_Hangs_Up,
+      Step ("the peer pumps")                                 >= Peer_Pump,
+      Step ("the pump outcome is {word}")                     >= Check_Pump,
+      Step ("the peer read what the browser sent")            >= Check_Read_Sent,
+      Step ("the browser reads a text frame of {int} bytes")  >= Check_Text_Length,
+      Step ("the browser reads a text frame {string}")        >= Check_Text_Frame,
+      Step ("the browser reads a packed frame of what the peer packed")
+                                                              >= Check_Packed_Frame,
+      Step ("the browser reads a pong {string}")              >= Check_Pong_Frame,
+      Step ("the browser reads a close with code {int}")      >= Check_Close_Frame,
+      Step ("the peer is shut")                               >= Check_Shut,
+      Step ("a send from the peer fails")                     >= Check_Send_Fails];
    --!format on
 
    Hook_Defs : constant Steps.Hook_Table :=
