@@ -13,8 +13,6 @@ with Nuntius.Rfc6455; use Nuntius.Rfc6455;
 with Nuntius_World;         use Nuntius_World;
 with Nuntius_World.Browser; use Nuntius_World.Browser;
 
-with Test_Payloads;
-
 package body Nuntius_Steps.Ws_Peer is
 
    use type Peers.Pump_Outcome;
@@ -36,22 +34,6 @@ package body Nuntius_Steps.Ws_Peer is
    Max_Named_Bytes : constant := 4_096;
 
    Octet_Base : constant := 256;
-
-   --  One row of Test_Payloads.Json_Like, measured rather than assumed.
-   Json_Row_Bytes : constant Positive := Test_Payloads.Json_Like (1)'Length;
-
-   --  N bytes of repetitive JSON.
-   function Json_Of (N : Natural) return String
-   is (Test_Payloads.Json_Like (N / Json_Row_Bytes + 1) (1 .. N));
-
-   function Chars_Of (B : Octets) return String is
-      S : String (1 .. B'Length);
-   begin
-      for K in B'Range loop
-         S (K - B'First + 1) := Character'Val (B (K));
-      end loop;
-      return S;
-   end Chars_Of;
 
    ---------------------------------------------------------------------
    --  Sending.

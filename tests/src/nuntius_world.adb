@@ -1,6 +1,8 @@
 with Ada.Strings.Fixed;
 with Ada.Text_IO;
 
+with Test_Payloads;
+
 package body Nuntius_World is
 
    function Has (Haystack, Needle : String) return Boolean
@@ -81,5 +83,29 @@ package body Nuntius_World is
       when Ada.Text_IO.Name_Error | Ada.Text_IO.Use_Error =>
          Ok := False;
    end Named_Bytes;
+
+   function Chars_Of (B : Nuntius.Rfc6455.Octets) return String is
+      S : String (1 .. B'Length);
+   begin
+      for K in B'Range loop
+         S (K - B'First + 1) := Character'Val (B (K));
+      end loop;
+      return S;
+   end Chars_Of;
+
+   function Octets_Of (S : String) return Nuntius.Rfc6455.Octets is
+      B : Nuntius.Rfc6455.Octets (1 .. S'Length);
+   begin
+      for K in S'Range loop
+         B (K - S'First + 1) := Character'Pos (S (K));
+      end loop;
+      return B;
+   end Octets_Of;
+
+   --  One row of Test_Payloads.Json_Like, measured rather than assumed.
+   Json_Row_Bytes : constant Positive := Test_Payloads.Json_Like (1)'Length;
+
+   function Json_Of (N : Natural) return String
+   is (Test_Payloads.Json_Like (N / Json_Row_Bytes + 1) (1 .. N));
 
 end Nuntius_World;
