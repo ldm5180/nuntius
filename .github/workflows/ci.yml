@@ -78,6 +78,13 @@ jobs:
         # network beyond loopback connection-refusals.
         run: alr --non-interactive test
 
+      - name: Run the Gherkin features, both modes, report in the log
+        # alr test keeps its output in a log file, so the scenarios run
+        # again here, where they show in the CI log; make features also
+        # checks the summary line, which alr test cannot, since fabula
+        # exits 0 for a missing path.
+        run: make features
+
       - name: Show the test log on failure
         # `alr test` swallows the runner's stdout into a local file and
         # prints only "check the log" -- which the job then throws away
