@@ -59,10 +59,24 @@ features-report:
 	 node tools/features-report/report.js obj/features-report/json \
 	   obj/features-report/html && exit $$rc
 
-## prove       Run the SPARK proof (same flags as CI)
+## prove       Run the SPARK proof (same flags as CI), bounded in time
+#  PROVE_TIMEOUT only stops a wedged run.  phase1_guard.py first drops
+#  gnatprove's phase-1 ALIs when a `gnatprove -u` left two of them
+#  disagreeing on a source's checksum: from there gnatprove's own
+#  gprbuild re-reads an ALI its compiler is rewriting and spins until
+#  killed.  Its selftest runs first.  The lock holds the guard and
+#  gnatprove together, because two gnatprove runs on one tree corrupt
+#  each other's output.
+PROVE_TIMEOUT ?= 30m
+PROVE_OBJ := proof/obj
 prove:
-	alr exec -- gnatprove -P proof/proof.gpr -j0 --level=2 --checks-as-errors=on \
-	  --warnings=error
+	python3 tools/phase1_guard.py --selftest
+	@mkdir -p $(PROVE_OBJ)
+	flock $(PROVE_OBJ)/.prove.lock sh -c '\
+	  python3 tools/phase1_guard.py --obj $(PROVE_OBJ) \
+	    proof/src src/core && \
+	  timeout $(PROVE_TIMEOUT) alr exec -- gnatprove -P proof/proof.gpr \
+	    -j0 --level=2 --checks-as-errors=on --warnings=error'
 
 ## format      Check formatting (per project, explicit files; no warnings)
 format:
